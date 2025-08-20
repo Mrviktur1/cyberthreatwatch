@@ -15,16 +15,39 @@ import json
 from typing import Dict, List, Optional, Any
 import logging
 
-# Add the project root to Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add the correct project root to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(os.path.dirname(current_dir))
+sys.path.append(project_root)
 
-# Import your components using absolute paths
-from dashboard.components.sidebar import Sidebar
-from dashboard.components.header import Header
-from dashboard.components.dashboard_cards import DashboardCards
-from dashboard.components.threat_intel import ThreatIntelPanel
-from dashboard.components.geo_map import GeoMapVisualization
-from dashboard.components.timeline import TimelineVisualization
+# Try multiple import paths to handle different project structures
+try:
+    # Try absolute import first
+    from dashboard.components.sidebar import Sidebar
+    from dashboard.components.header import Header
+    from dashboard.components.dashboard_cards import DashboardCards
+    from dashboard.components.threat_intel import ThreatIntelPanel
+    from dashboard.components.geo_map import GeoMapVisualization
+    from dashboard.components.timeline import TimelineVisualization
+except ImportError:
+    try:
+        # Try relative import if absolute fails
+        from .components.sidebar import Sidebar
+        from .components.header import Header
+        from .components.dashboard_cards import DashboardCards
+        from .components.threat_intel import ThreatIntelPanel
+        from .components.geo_map import GeoMapVisualization
+        from .components.timeline import TimelineVisualization
+    except ImportError:
+        # Fallback: Create minimal versions if imports fail
+        st.error("Some components failed to load. Using fallback components.")
+        
+        # Define fallback components
+        class FallbackComponent:
+            def render(self):
+                st.warning("Component not available")
+        
+        Sidebar = Header = DashboardCards = ThreatIntelPanel = GeoMapVisualization = TimelineVisualization = FallbackComponent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -202,32 +225,73 @@ class CyberThreatWatch:
     def render_alerts_page(self):
         """Render alerts page"""
         try:
-            # Use absolute import
-            from dashboard.pages.alerts import render_alerts_page
-            render_alerts_page()
+            # Try multiple import approaches
+            try:
+                from dashboard.pages.alerts import render_alerts_page
+                render_alerts_page()
+            except ImportError:
+                from .pages.alerts import render_alerts_page
+                render_alerts_page()
         except ImportError as e:
             st.error("Alerts module not available")
             logger.error(f"Alerts page import error: {e}")
+            self.fallback_alerts_page()
+    
+    def fallback_alerts_page(self):
+        """Fallback alerts page when module is not available"""
+        st.header("🚨 Alerts")
+        st.info("Alerts module is being loaded...")
+        
+        # Simple alerts display as fallback
+        alerts = st.session_state.get('alerts_data', [])
+        if alerts:
+            st.write(f"**Total Alerts:** {len(alerts)}")
+            for alert in alerts[:5]:  # Show first 5 alerts
+                st.write(f"**{alert.get('type', 'Unknown')}** - {alert.get('severity', 'Unknown')}")
+        else:
+            st.write("No alerts data available")
     
     def render_reports_page(self):
         """Render reports page"""
         try:
-            # Use absolute import
-            from dashboard.pages.reports import render_reports_page
-            render_reports_page()
+            try:
+                from dashboard.pages.reports import render_reports_page
+                render_reports_page()
+            except ImportError:
+                from .pages.reports import render_reports_page
+                render_reports_page()
         except ImportError as e:
             st.error("Reports module not available")
             logger.error(f"Reports page import error: {e}")
+            self.fallback_reports_page()
+    
+    def fallback_reports_page(self):
+        """Fallback reports page"""
+        st.header("📊 Reports")
+        st.info("Reports module is being loaded...")
+        st.write("Generate and view security reports here")
     
     def render_search_page(self):
         """Render search page"""
         try:
-            # Use absolute import
-            from dashboard.pages.search import render_search_page
-            render_search_page()
+            try:
+                from dashboard.pages.search import render_search_page
+                render_search_page()
+            except ImportError:
+                from .pages.search import render_search_page
+                render_search_page()
         except ImportError as e:
             st.error("Search module not available")
             logger.error(f"Search page import error: {e}")
+            self.fallback_search_page()
+    
+    def fallback_search_page(self):
+        """Fallback search page"""
+        st.header("🔍 Search")
+        st.info("Search module is being loaded...")
+        search_term = st.text_input("Search for threats, alerts, or indicators")
+        if search_term:
+            st.write(f"Searching for: {search_term}")
     
     def render_settings_page(self):
         """Render settings page"""
