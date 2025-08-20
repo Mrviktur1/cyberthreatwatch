@@ -1,0 +1,270 @@
+# CyberThreatWatch Dashboard Configuration
+
+# Default Dashboard Layouts
+dashboards:
+  - id: overview
+    name: Security Overview
+    description: High-level security overview with key metrics and alerts
+    default: true
+    layout:
+      - type: row
+        panels:
+          - type: metric
+            title: Total Events
+            query: events.count()
+            span: 3
+            format: number
+            color: blue
+
+          - type: metric
+            title: Security Alerts
+            query: alerts.where('severity').in(['high', 'critical']).count()
+            span: 3
+            format: number
+            color: red
+
+          - type: metric
+            title: Unique Sources
+            query: events.distinct('source_ip').count()
+            span: 3
+            format: number
+            color: green
+
+          - type: metric
+            title: Data Processed
+            query: events.sum('bytes')
+            span: 3
+            format: bytes
+            color: purple
+
+      - type: row
+        panels:
+          - type: timeline
+            title: Events Over Time
+            query: events.groupby('1h').count()
+            span: 8
+            height: 300
+
+          - type: pie
+            title: Event Types
+            query: events.groupby('event_type').count()
+            span: 4
+            height: 300
+
+      - type: row
+        panels:
+          - type: table
+            title: Recent Alerts
+            query: alerts.sort('timestamp', 'desc').limit(10)
+            span: 6
+            columns: ["timestamp", "rule_name", "severity", "source_ip"]
+
+          - type: table
+            title: Top Sources
+            query: events.groupby('source_ip').count().sort('count', 'desc').limit(10)
+            span: 6
+            columns: ["source_ip", "count"]
+
+  - id: network
+    name: Network Monitoring
+    description: Network traffic and security monitoring dashboard
+    layout:
+      - type: row
+        panels:
+          - type: metric
+            title: Network Connections
+            query: events.where('event_type').equals('network_connection').count()
+            span: 4
+            format: number
+
+          - type: metric
+            title: Blocked Connections
+            query: events.where('action').equals('block').count()
+            span: 4
+            format: number
+            color: red
+
+          - type: metric
+            title: Data Transferred
+            query: events.sum('bytes')
+            span: 4
+            format: bytes
+
+      - type: row
+        panels:
+          - type: timeline
+            title: Network Traffic
+            query: events.groupby('1h').sum('bytes')
+            span: 12
+            height: 300
+
+      - type: row
+        panels:
+          - type: topn
+            title: Top Source IPs
+            query: events.groupby('source_ip').count().sort('count', 'desc').limit(10)
+            span: 6
+            height: 250
+
+          - type: topn
+            title: Top Destination IPs
+            query: events.groupby('dest_ip').count().sort('count', 'desc').limit(10)
+            span: 6
+            height: 250
+
+      - type: row
+        panels:
+          - type: geo
+            title: Geographic Distribution
+            query: events.where('geoip_country').exists().groupby('geoip_country').count()
+            span: 12
+            height: 400
+
+  - id: threats
+    name: Threat Detection
+    description: Advanced threat detection and analysis dashboard
+    layout:
+      - type: row
+        panels:
+          - type: metric
+            title: Malicious IPs
+            query: events.where('threat_score').greaterThan(80).count()
+            span: 3
+            color: red
+
+          - type: metric
+            title: Suspicious Domains
+            query: events.where('is_suspicious_domain').equals(true).count()
+            span: 3
+            color: orange
+
+          - type: metric
+            title: Malware Detections
+            query: events.where('malware_detected').equals(true).count()
+            span: 3
+            color: purple
+
+          - type: metric
+            title: CVE Matches
+            query: events.where('cve_count').greaterThan(0).count()
+            span: 3
+            color: yellow
+
+      - type: row
+        panels:
+          - type: timeline
+            title: Threat Events Over Time
+            query: events.where('threat_score').greaterThan(50).groupby('1h').count()
+            span: 8
+            height: 300
+
+          - type: pie
+            title: Threat Types
+            query: events.where('threat_score').greaterThan(50).groupby('threat_type').count()
+            span: 4
+            height: 300
+
+      - type: row
+        panels:
+          - type: table
+            title: Recent Threat Alerts
+            query: alerts.where('severity').in(['high', 'critical']).sort('timestamp', 'desc').limit(15)
+            span: 12
+            columns: ["timestamp", "rule_name", "severity", "source_ip", "description"]
+
+      - type: row
+        panels:
+          - type: correlation
+            title: Attack Patterns
+            query: events.where('threat_score').greaterThan(70).groupby('technique_id').count()
+            span: 12
+            height: 300
+
+  - id: compliance
+    name: Compliance Reporting
+    description: Compliance and audit reporting dashboard
+    layout:
+      - type: row
+        panels:
+          - type: metric
+            title: PII Access Events
+            query: events.where('contains_pii').equals(true).count()
+            span: 4
+
+          - type: metric
+            title: Policy Violations
+            query: events.where('policy_violation').equals(true).count()
+            span: 4
+            color: orange
+
+          - type: metric
+            title: Authentication Failures
+            query: events.where('event_type').equals('auth_failed').count()
+            span: 4
+            color: red
+
+      - type: row
+        panels:
+          - type: timeline
+            title: Compliance Events Timeline
+            query: events.where('compliance_related').equals(true).groupby('1d').count()
+            span: 12
+            height: 300
+
+      - type: row
+        panels:
+          - type: table
+            title: Recent Compliance Events
+            query: events.where('compliance_related').equals(true).sort('timestamp', 'desc').limit(20)
+            span: 6
+            columns: ["timestamp", "event_type", "user", "resource"]
+
+          - type: table
+            title: Top Users by Compliance Events
+            query: events.where('compliance_related').equals(true).groupby('user').count().sort('count', 'desc').limit(10)
+            span: 6
+            columns: ["user", "count"]
+
+      - type: row
+        panels:
+          - type: compliance_status
+            title: Compliance Status by Category
+            query: events.where('compliance_related').equals(true).groupby('compliance_category').count()
+            span: 12
+            height: 250
+
+# Dashboard Settings
+settings:
+  refresh_interval: 300
+  default_time_range: 24h
+  max_data_points: 10000
+  theme: light
+  annotations: true
+  tooltips: true
+
+# Panel Defaults
+panel_defaults:
+  timeline:
+    height: 250
+    show_legend: true
+    fill: true
+  table:
+    page_size: 10
+    show_index: false
+  metric:
+    sparkline: true
+    thresholds:
+      - color: red
+        value: 1000
+      - color: orange
+        value: 500
+      - color: green
+        value: 0
+
+# User Preferences
+user_preferences:
+  timezone: UTC
+  date_format: relative
+  number_format: short
+  collapse_nav: false
+  compact_mode: false

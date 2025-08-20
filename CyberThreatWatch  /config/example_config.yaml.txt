@@ -1,0 +1,11 @@
+
+---
+
+### 📄 **4. config/example_config.yaml** (Safe Template)
+**Save in the `config` folder**
+
+```yaml
+virus_total:
+  api_key: "paste_key_here"  # Get free key from virustotal.com
+alien_vault:
+  api_key: "paste_key_here"  # Get free key from otx.alienvault.com

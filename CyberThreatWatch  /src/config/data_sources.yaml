@@ -1,0 +1,243 @@
+# CyberThreatWatch Data Source Configuration
+
+# File Sources
+file_sources:
+  - name: firewall_logs
+    type: file
+    path: /var/log/firewall.log
+    format: syslog
+    parser: syslog_parser
+    enabled: true
+    watch: true
+    tags: ["network", "security"]
+
+  - name: application_logs
+    type: file
+    path: /var/log/application/*.log
+    format: json
+    parser: json_parser
+    enabled: true
+    watch: true
+    tags: ["application", "security"]
+
+  - name: windows_events
+    type: file
+    path: /var/log/windows_events.csv
+    format: csv
+    parser: csv_parser
+    enabled: true
+    watch: false
+    tags: ["windows", "system"]
+
+  - name: apache_access
+    type: file
+    path: /var/log/apache2/access.log
+    format: combined
+    parser: custom_parser
+    enabled: true
+    watch: true
+    tags: ["web", "access"]
+
+  - name: apache_error
+    type: file
+    path: /var/log/apache2/error.log
+    format: errorlog
+    parser: custom_parser
+    enabled: true
+    watch: true
+    tags: ["web", "errors"]
+
+# API Sources
+api_sources:
+  - name: aws_cloudtrail
+    type: api
+    endpoint: https://cloudtrail.us-east-1.amazonaws.com
+    format: json
+    auth_type: aws_signature_v4
+    interval: 300
+    enabled: true
+    region: us-east-1
+    tags: ["cloud", "audit"]
+
+  - name: azure_security_center
+    type: api
+    endpoint: https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.Security/alerts
+    format: json
+    auth_type: oauth2
+    interval: 600
+    enabled: true
+    tags: ["cloud", "security"]
+
+  - name: crowdstrike_detections
+    type: api
+    endpoint: https://api.crowdstrike.com/detects/queries/detects/v1
+    format: json
+    auth_type: bearer
+    interval: 300
+    enabled: true
+    tags: ["edr", "detection"]
+
+  - name: sentinelone_threats
+    type: api
+    endpoint: https://usea1.sentinelone.net/web/api/v2.1/threats
+    format: json
+    auth_type: api_key
+    interval: 300
+    enabled: true
+    tags: ["edr", "threats"]
+
+# Database Sources
+database_sources:
+  - name: postgres_audit
+    type: database
+    connection_string: postgresql://user:password@localhost:5432/audit_db
+    driver: psycopg2
+    query: SELECT * FROM audit_events WHERE timestamp > %(last_run)s
+    interval: 60
+    enabled: true
+    tags: ["database", "audit"]
+
+  - name: mysql_security
+    type: database
+    connection_string: mysql://user:password@localhost:3306/security_db
+    driver: mysql-connector
+    query: SELECT * FROM security_events WHERE event_time > %(last_run)s
+    interval: 60
+    enabled: true
+    tags: ["database", "security"]
+
+# Stream Sources
+stream_sources:
+  - name: syslog_server
+    type: stream
+    protocol: udp
+    host: 0.0.0.0
+    port: 514
+    enabled: true
+    parser: syslog_parser
+    tags: ["network", "realtime"]
+
+  - name: http_webhooks
+    type: stream
+    protocol: tcp
+    host: 0.0.0.0
+    port: 8080
+    enabled: true
+    parser: json_parser
+    tags: ["web", "realtime"]
+
+  - name: kafka_events
+    type: stream
+    protocol: kafka
+    brokers: ["kafka1:9092", "kafka2:9092"]
+    topic: security-events
+    group_id: cyberthreatwatch
+    enabled: true
+    parser: json_parser
+    tags: ["message-queue", "realtime"]
+
+# Cloud Storage Sources
+cloud_storage_sources:
+  - name: s3_cloudtrail
+    type: cloud_storage
+    provider: aws
+    bucket: my-cloudtrail-bucket
+    prefix: AWSLogs/123456789012/CloudTrail/
+    format: json
+    parser: json_parser
+    interval: 900
+    enabled: true
+    tags: ["cloud", "audit"]
+
+  - name: gcp_audit_logs
+    type: cloud_storage
+    provider: gcp
+    bucket: my-audit-logs
+    prefix: audit/
+    format: json
+    parser: json_parser
+    interval: 900
+    enabled: true
+    tags: ["cloud", "audit"]
+
+# External Feeds
+threat_intel_feeds:
+  - name: abuse_ch_ssl
+    type: feed
+    url: https://sslbl.abuse.ch/blacklist/sslblacklist.csv
+    format: csv
+    parser: csv_parser
+    interval: 3600
+    enabled: true
+    tags: ["threat-intel", "ssl"]
+
+  - name: alienvault_otx
+    type: feed
+    url: https://otx.alienvault.com/api/v1/pulses/subscribed
+    format: json
+    parser: json_parser
+    interval: 1800
+    enabled: true
+    tags: ["threat-intel", "ioc"]
+
+  - name: circl_cve
+    type: feed
+    url: https://cve.circl.lu/api/last
+    format: json
+    parser: json_parser
+    interval: 86400
+    enabled: true
+    tags: ["threat-intel", "cve"]
+
+# Normalization Rules
+normalization_rules:
+  - name: timestamp_standardization
+    description: Standardize timestamp formats to ISO 8601
+    enabled: true
+    priority: 1
+
+  - name: ip_address_enrichment
+    description: Enrich IP addresses with geoip and threat intel data
+    enabled: true
+    priority: 2
+
+  - name: user_agent_parsing
+    description: Parse user agent strings into structured data
+    enabled: true
+    priority: 3
+
+  - name: url_normalization
+    description: Normalize URLs and extract components
+    enabled: true
+    priority: 4
+
+# Processing Settings
+processing:
+  batch_size: 1000
+  max_workers: 8
+  queue_size: 10000
+  retention_days: 90
+  compression: gzip
+
+# Data Enrichment Settings
+enrichment:
+  geoip:
+    enabled: true
+    database_path: /opt/cyberthreatwatch/data/GeoLite2-City.mmdb
+  whois:
+    enabled: true
+  threat_intel:
+    enabled: true
+    cache_ttl: 3600
+
+# Field Extraction Rules
+field_extraction:
+  - name: http_log_fields
+    pattern: '^(?P<source_ip>\S+) \S+ \S+ \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<url>\S+) \S+" (?P<status_code>\d+) (?P<bytes>\d+)'
+    source: apache_access
+    enabled: true
+
+  - name: ssh_auth_fields
+    pattern: 'Failed password for (?P<username>\S+) from (?P<source_ip>\S+)'
+    source: auth_logs
+    enabled: true

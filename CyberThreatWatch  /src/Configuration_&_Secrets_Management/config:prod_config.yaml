@@ -1,0 +1,11 @@
+nvd:
+  api_key: "your_nvd_api_key"
+otx:
+  api_key: "your_otx_key"
+email:
+  smtp_server: "smtp.gmail.com"
+  smtp_port: 587
+  sender_email: "your_email@gmail.com"
+  sender_password: "app_password"  # Use App Password for Gmail
+slack:
+  webhook_url: "https://hooks.slack.com/services/XXX"

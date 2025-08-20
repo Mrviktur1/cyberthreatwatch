@@ -1,0 +1,123 @@
+# CyberThreatWatch Alert Rules
+
+# Failed Login Rules
+- id: multiple_failed_logins
+  name: Multiple Failed Login Attempts
+  description: Detect multiple failed login attempts from the same source
+  condition: events.where('event_type').equals('auth_failed').groupby('source_ip').count().greaterThan(5).within('5m')
+  severity: high
+  enabled: true
+  actions:
+    - type: alert
+    - type: email
+    - type: slack
+
+- id: brute_force_attempt
+  name: Brute Force Attack Detection
+  description: Detect brute force attack patterns
+  condition: events.where('event_type').equals('auth_failed').groupby('source_ip', 'username').count().greaterThan(10).within('10m')
+  severity: critical
+  enabled: true
+  actions:
+    - type: alert
+    - type: block_ip
+
+# Network Security Rules
+- id: port_scan_detection
+  name: Port Scanning Activity
+  description: Detect port scanning behavior
+  condition: events.where('event_type').equals('connection_attempt').groupby('source_ip', 'dest_port').count().greaterThan(20).within('1m')
+  severity: medium
+  enabled: true
+  actions:
+    - type: alert
+
+- id: data_exfiltration
+  name: Data Exfiltration Attempt
+  description: Detect large outbound data transfers
+  condition: events.where('bytes_out').greaterThan(1000000).groupby('source_ip').count().greaterThan(3).within('1h')
+  severity: high
+  enabled: true
+  actions:
+    - type: alert
+    - type: email
+
+# Threat Intelligence Rules
+- id: known_malicious_ip
+  name: Communication with Known Malicious IP
+  description: Detect communication with known malicious IP addresses
+  condition: events.where('dest_ip').inThreatIntel('ip').and('event_type').equals('network_connection')
+  severity: high
+  enabled: true
+  actions:
+    - type: alert
+    - type: block_ip
+
+- id: malware_signature
+  name: Malware Signature Detected
+  description: Detect known malware signatures
+  condition: events.where('file_hash').inThreatIntel('hash').or('signature').matches('.*malware.*')
+  severity: critical
+  enabled: true
+  actions:
+    - type: alert
+    - type: quarantine
+
+# Behavioral Anomaly Rules
+- id: unusual_working_hours
+  name: Activity During Unusual Hours
+  description: Detect activity outside normal working hours
+  condition: events.where('timestamp').outsideHours(9, 17).and('user').exists()
+  severity: medium
+  enabled: true
+  actions:
+    - type: alert
+
+- id: geographic_anomaly
+  name: Geographic Login Anomaly
+  description: Detect logins from unusual geographic locations
+  condition: events.where('geoip_country').notIn(['US', 'CA', 'GB']).and('event_type').equals('auth_success')
+  severity: medium
+  enabled: true
+  actions:
+    - type: alert
+    - type: require_mfa
+
+# Compliance Rules
+- id: pii_access
+  name: PII Data Access
+  description: Detect access to personally identifiable information
+  condition: events.where('sensitivity').equals('pii').and('access_type').equals('read')
+  severity: high
+  enabled: true
+  actions:
+    - type: alert
+    - type: log
+
+- id: policy_violation
+  name: Security Policy Violation
+  description: Detect violations of security policies
+  condition: events.where('policy_violation').exists()
+  severity: medium
+  enabled: true
+  actions:
+    - type: alert
+
+# System Health Rules
+- id: high_cpu_usage
+  name: High CPU Usage
+  description: Detect unusually high CPU usage
+  condition: metrics.where('metric_name').equals('cpu_usage').greaterThan(90).within('5m')
+  severity: medium
+  enabled: true
+  actions:
+    - type: alert
+
+- id: disk_space_critical
+  name: Critical Disk Space
+  description: Detect critically low disk space
+  condition: metrics.where('metric_name').equals('disk_free').lessThan(5).within('1h')
+  severity: high
+  enabled: true
+  actions:
+    - type: alert
