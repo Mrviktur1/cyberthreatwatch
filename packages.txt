@@ -1,2 +1,5 @@
 libffi-dev
 libssl-dev
+cmake
+build-essential
+pkg-config
