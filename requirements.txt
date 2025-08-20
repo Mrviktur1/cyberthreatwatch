@@ -32,6 +32,6 @@ bcrypt==4.1.2
 setuptools
 wheel
 
-pyarrow==13.0.0
-pillow==9.5.0
+pyarrow==15.0.0
+pillow==10.0.0
 numpy==1.26.0
