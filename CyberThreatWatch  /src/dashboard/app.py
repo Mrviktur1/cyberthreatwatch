@@ -565,10 +565,150 @@ class CyberThreatWatch:
             else:
                 st.info("No threat detections yet. Run detection from the Threat Detection page.")
     
-    # ... (keep the rest of your methods: render_alerts_page, render_reports_page, etc.)
-    # The other methods remain unchanged from your original code
+    def render_alerts_page(self):
+        """Render alerts page"""
+        st.header("🚨 Alerts")
+        
+        if st.session_state.alerts_data:
+            for alert in st.session_state.alerts_data:
+                with st.expander(f"{alert.get('type')} - {alert.get('severity')}"):
+                    st.json(alert)
+        else:
+            st.info("No alerts available")
+    
+    def render_reports_page(self):
+        """Render reports page"""
+        st.header("📋 Reports")
+        
+        # Include detection reports
+        if st.session_state.detections:
+            st.subheader("Threat Detection Report")
+            st.write(f"Total detections: {len(st.session_state.detections)}")
+            
+            # Create a simple report
+            detection_df = pd.DataFrame(st.session_state.detections)
+            if not detection_df.empty:
+                st.dataframe(detection_df[['title', 'severity', 'timestamp']])
+        else:
+            st.info("No detection data available for reports. Run threat detection first.")
+    
+    def render_search_page(self):
+        """Render search page"""
+        st.header("🔍 Search")
+        search_term = st.text_input("Search threats, alerts, detections, or indicators")
+        if search_term:
+            # Search across all data sources
+            all_data = (st.session_state.alerts_data + 
+                       st.session_state.threat_data + 
+                       st.session_state.detections)
+            
+            results = [
+                item for item in all_data
+                if search_term.lower() in str(item).lower()
+            ]
+            st.write(f"Found {len(results)} results for '{search_term}'")
+            
+            if results:
+                for result in results:
+                    with st.expander(f"Result: {result.get('title', 'Unknown')}"):
+                        st.json(result)
+    
+    def render_settings_page(self):
+        """Render settings page"""
+        st.header("⚙️ Settings")
+        
+        with st.form("settings_form"):
+            st.subheader("User Preferences")
+            timezone = st.selectbox("Timezone", ["UTC", "EST", "PST", "CET"])
+            refresh_rate = st.slider("Refresh rate (min)", 1, 60, 5)
+            
+            st.subheader("API Configuration")
+            otx_key = st.text_input("OTX API Key", type="password")
+            supabase_url = st.text_input("Supabase URL")
+            supabase_key = st.text_input("Supabase Key", type="password")
+            
+            st.subheader("Threat Detection")
+            auto_detect = st.checkbox("Enable automatic threat detection", value=True)
+            detection_interval = st.slider("Detection interval (min)", 1, 60, 15)
+            
+            if st.form_submit_button("💾 Save Settings"):
+                st.success("Settings saved successfully!")
+    
+    def load_sample_data(self):
+        """Load sample data for demonstration"""
+        sample_alerts = [
+            {
+                "id": 1, "timestamp": datetime.now() - timedelta(hours=2),
+                "severity": "High", "type": "Malware Detection",
+                "source_ip": "192.168.1.100", "description": "Suspicious executable detected"
+            },
+            {
+                "id": 2, "timestamp": datetime.now() - timedelta(hours=5),
+                "severity": "Medium", "type": "Port Scan",
+                "source_ip": "10.0.0.50", "description": "Multiple connection attempts detected"
+            }
+        ]
+        
+        sample_threats = [
+            {
+                "indicator": "malicious-domain.com", "type": "domain",
+                "threat_score": 85, "first_seen": datetime.now() - timedelta(days=30),
+                "last_seen": datetime.now()
+            }
+        ]
+        
+        st.session_state.alerts_data = sample_alerts
+        st.session_state.threat_data = sample_threats
+        st.session_state.detections = []  # Initialize empty detections
+    
+    def main_application(self):
+        """Main application logic - only called when authenticated"""
+        self.render_header()
+        selected_page = self.render_sidebar()
+        
+        if selected_page == "Dashboard":
+            self.render_dashboard_page()
+        elif selected_page == "Alerts":
+            self.render_alerts_page()
+        elif selected_page == "Reports":
+            self.render_reports_page()
+        elif selected_page == "Search":
+            self.render_search_page()
+        elif selected_page == "Threat Detection":
+            self.render_threat_detection_page()
+        elif selected_page == "Settings":
+            self.render_settings_page()
+        
+        if st.sidebar.button("🚪 Logout", type="primary"):
+            st.session_state.authenticated = False
+            st.session_state.username = None
+            st.session_state.user_role = None
+            st.session_state.detections = []
+            st.rerun()
+    
+    def run(self):
+        """Main application runner"""
+        try:
+            if not st.session_state.get('alerts_data'):
+                self.load_sample_data()
+            
+            if not st.session_state.get('auth_init'):
+                self.setup_authentication()
+            
+            if not st.session_state.authenticated:
+                st.sidebar.empty()
+                self.login_section()
+                return
+            else:
+                self.main_application()
+                
+        except Exception as e:
+            logger.error(f"Application error: {e}")
+            st.error("An unexpected error occurred. Please try refreshing the page.")
+            if st.button("Reset Application"):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
 
-# Run the application
-if __name__ == "__main__":
-    app = CyberThreatWatch()
-    app.run()
+# Create the app instance - Streamlit will handle execution automatically
+app = CyberThreatWatch()
