@@ -28,14 +28,14 @@ load_dotenv()
 
 # Import your detection functions from the correct location
 try:
-    from dashboard.components.detection import ioc_match, brute_force, looks_like_phishing
+    from dashboard.components.detection import ioc_match, brute_force, looks_like_phishing, impossible_travel, dns_tunnel_detection, honeytoken_access, run_all_detections
     DETECTIONS_AVAILABLE = True
     logger.info("Successfully imported detection functions from dashboard.components.detection")
 except ImportError as e:
     logger.warning(f"Detection functions import error: {e}")
     # Fallback: try to import from detections.py in same directory
     try:
-        from detections import ioc_match, brute_force, looks_like_phishing
+        from detections import ioc_match, brute_force, looks_like_phishing, impossible_travel, dns_tunnel_detection, honeytoken_access, run_all_detections
         DETECTIONS_AVAILABLE = True
         logger.info("Successfully imported detection functions from local detections.py")
     except ImportError:
@@ -54,6 +54,19 @@ class CyberThreatWatch:
         # Initialize Supabase connection
         self.supabase = None
         self.init_supabase()
+        
+        # Initialize geoip lookup (placeholder - you'll need to implement this)
+        self.geoip_lookup = self.simple_geoip_lookup
+        
+    def simple_geoip_lookup(self, ip):
+        """Simple placeholder for geoip lookup - replace with real implementation"""
+        # This is a mock implementation - replace with actual geoip service
+        geoip_mock_data = {
+            "192.168.1.100": (40.7128, -74.0060),  # New York
+            "10.0.0.50": (34.0522, -118.2437),     # Los Angeles
+            "172.16.0.25": (51.5074, -0.1278),     # London
+        }
+        return geoip_mock_data.get(ip, None)
         
     def setup_page_config(self):
         """Configure Streamlit page settings"""
@@ -86,6 +99,8 @@ class CyberThreatWatch:
             st.session_state.supabase_connected = False
         if 'detection_available' not in st.session_state:
             st.session_state.detection_available = DETECTIONS_AVAILABLE
+        if 'detection_method' not in st.session_state:
+            st.session_state.detection_method = "comprehensive"  # or "basic"
     
     def init_supabase(self):
         """Initialize Supabase connection"""
@@ -241,6 +256,14 @@ class CyberThreatWatch:
         
         st.sidebar.markdown("---")
         
+        # Detection method selection
+        st.sidebar.selectbox(
+            "Detection Method", 
+            ["Basic", "Comprehensive"],
+            key="detection_method",
+            index=1 if st.session_state.get('detection_method') == "comprehensive" else 0
+        )
+        
         time_range = st.sidebar.selectbox(
             "Time Range", ["1h", "6h", "12h", "24h", "7d", "30d"], index=3
         )
@@ -293,61 +316,133 @@ class CyberThreatWatch:
                 
                 logger.info(f"Loaded {len(events)} events and {len(iocs)} IOCs")
             
-            # 2) Run detections
-            detections = []
-
-            # IOC matching
-            for e in events:
-                hits = ioc_match(e, iocs)
-                if hits:
-                    detections.append({
-                        "title": "IOC Match Detected",
-                        "event_id": e.get("id", "unknown"),
-                        "hits": hits,
-                        "severity": "critical",
-                        "timestamp": e.get("timestamp", datetime.now().isoformat()),
-                        "source_ip": e.get("source_ip", "N/A"),
-                        "description": f"Matched {len(hits)} IOCs"
-                    })
-
-            # Brute force rule
-            brute_force_detections = brute_force(events)
-            for detection in brute_force_detections:
-                detection["severity"] = "high"
-                detection["title"] = "Brute Force Attempt"
-            detections.extend(brute_force_detections)
-
-            # Simple phishing heuristic
-            for e in events:
-                if e.get("domain") and looks_like_phishing(e["domain"]):
-                    detections.append({
-                        "title": "Suspicious Domain",
-                        "event_id": e.get("id", "unknown"),
-                        "severity": "medium",
-                        "domain": e["domain"],
-                        "timestamp": e.get("timestamp", datetime.now().isoformat()),
-                        "description": "Domain matches phishing patterns"
-                    })
-            
-            logger.info(f"Completed threat detection with {len(detections)} findings")
-            return detections
+            # 2) Run detections based on selected method
+            if st.session_state.detection_method.lower() == "comprehensive":
+                return self.run_comprehensive_detections(events, iocs)
+            else:
+                return self.run_basic_detections(events, iocs)
             
         except Exception as e:
             logger.error(f"Threat detection error: {e}")
             st.error(f"Error running threat detection: {str(e)}")
             return []
     
+    def run_basic_detections(self, events, iocs):
+        """Run basic detection rules"""
+        detections = []
+
+        # IOC matching
+        for e in events:
+            result = ioc_match(e, iocs)
+            if result:
+                detections.append(result)
+
+        # Brute force rule
+        brute_force_detections = brute_force(events)
+        detections.extend(brute_force_detections)
+
+        # Simple phishing heuristic
+        for e in events:
+            if e.get("domain") and looks_like_phishing(e["domain"]):
+                detections.append({
+                    "title": "Suspicious Domain",
+                    "event_id": e.get("id", "unknown"),
+                    "severity": "medium",
+                    "domain": e["domain"],
+                    "timestamp": e.get("timestamp", datetime.now().isoformat()),
+                    "description": "Domain matches phishing patterns"
+                })
+        
+        logger.info(f"Completed basic threat detection with {len(detections)} findings")
+        return detections
+    
+    def run_comprehensive_detections(self, events, iocs):
+        """Run comprehensive detection rules including advanced techniques"""
+        all_detections = []
+
+        # Use the run_all_detections function if available
+        try:
+            if 'run_all_detections' in globals():
+                all_detections = run_all_detections(events, iocs, self.geoip_lookup)
+                logger.info(f"Completed comprehensive detection with {len(all_detections)} findings")
+                return all_detections
+        except Exception as e:
+            logger.warning(f"run_all_detections failed, falling back to individual rules: {e}")
+        
+        # Fallback: run individual detection rules
+        # IOC matching
+        for e in events:
+            result = ioc_match(e, iocs)
+            if result:
+                all_detections.append(result)
+
+        # Brute force
+        all_detections.extend(brute_force(events))
+
+        # Impossible travel (if we have login events)
+        try:
+            logins = [e for e in events if e.get("evt_type") == "login_success" or e.get("event_type") == "login"]
+            travel_detections = impossible_travel(logins, self.geoip_lookup)
+            all_detections.extend(travel_detections)
+        except Exception as e:
+            logger.warning(f"Impossible travel detection failed: {e}")
+
+        # DNS tunneling
+        for e in events:
+            try:
+                result = dns_tunnel_detection(e)
+                if result:
+                    all_detections.append(result)
+            except Exception as e:
+                logger.warning(f"DNS tunneling detection failed for event {e.get('id')}: {e}")
+
+        # Honeytoken access
+        for e in events:
+            try:
+                result = honeytoken_access(e)
+                if result:
+                    all_detections.append(result)
+            except Exception as e:
+                logger.warning(f"Honeytoken detection failed for event {e.get('id')}: {e}")
+
+        # Phishing domains
+        for e in events:
+            if e.get("domain") and looks_like_phishing(e["domain"]):
+                all_detections.append({
+                    "title": "Suspicious Phishing Domain",
+                    "event_id": e.get("id", "unknown"),
+                    "severity": "medium",
+                    "domain": e["domain"],
+                    "timestamp": e.get("timestamp", datetime.now().isoformat()),
+                    "description": "Domain matches phishing patterns",
+                    "rule_id": "PHISH-001",
+                    "technique": "T1566"
+                })
+        
+        logger.info(f"Completed comprehensive threat detection with {len(all_detections)} findings")
+        return all_detections
+    
     def render_threat_detection_page(self):
         """Render threat detection page"""
         st.header("🛡️ Real-time Threat Detection")
         
-        col1, col2 = st.columns([3, 1])
+        # Detection method selection
+        col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            st.info("Run automated threat detection against your Supabase data. Detects IOC matches, brute force attempts, and phishing domains.")
+            st.info("Run automated threat detection against your Supabase data. Choose detection method:")
         
         with col2:
+            detection_method = st.selectbox(
+                "Method", 
+                ["Basic", "Comprehensive"],
+                key="detection_method_select",
+                index=1 if st.session_state.get('detection_method') == "comprehensive" else 0
+            )
+            st.session_state.detection_method = detection_method.lower()
+        
+        with col3:
             if st.button("🔄 Run Detection", type="primary", use_container_width=True):
-                with st.spinner("Running comprehensive threat detection..."):
+                with st.spinner(f"Running {detection_method.lower()} threat detection..."):
                     st.session_state.detections = self.run_threat_detection()
         
         # Show connection status
@@ -372,26 +467,32 @@ class CyberThreatWatch:
             # Sort by severity
             severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
             sorted_detections = sorted(st.session_state.detections, 
-                                     key=lambda x: severity_order.get(x["severity"], 4))
+                                     key=lambda x: severity_order.get(x.get("severity", "low"), 4))
             
             for d in sorted_detections:
+                severity = d.get("severity", "unknown")
                 severity_color = {
                     "critical": "🔴",
                     "high": "🟠", 
                     "medium": "🟡",
-                    "low": "🟢"
-                }.get(d["severity"], "⚪")
+                    "low": "🟢",
+                    "unknown": "⚪"
+                }.get(severity, "⚪")
                 
-                with st.expander(f"{severity_color} {d['title']} - {d['severity'].upper()}", expanded=True):
+                with st.expander(f"{severity_color} {d.get('title', 'Unknown')} - {severity.upper()}", expanded=True):
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        st.write(f"**Event ID:** `{d['event_id']}`")
+                        st.write(f"**Event ID:** `{d.get('event_id', 'unknown')}`")
                         st.write(f"**Timestamp:** {d.get('timestamp', 'N/A')}")
                         if 'source_ip' in d:
                             st.write(f"**Source IP:** `{d['source_ip']}`")
                         if 'domain' in d:
                             st.write(f"**Domain:** `{d['domain']}`")
+                        if 'rule_id' in d:
+                            st.write(f"**Rule ID:** `{d['rule_id']}`")
+                        if 'technique' in d:
+                            st.write(f"**MITRE Technique:** `{d['technique']}`")
                     
                     with col2:
                         if 'hits' in d and d['hits']:
@@ -400,18 +501,20 @@ class CyberThreatWatch:
                                 st.write(f"• {hit}")
                         if 'description' in d:
                             st.write(f"**Description:** {d['description']}")
+                        if 'attempts' in d:
+                            st.write(f"**Attempts:** {d['attempts']}")
                     
                     # Action buttons
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        if st.button("📋 View Details", key=f"view_{d['event_id']}"):
-                            st.write(f"Detailed analysis for event {d['event_id']}")
+                        if st.button("📋 View Details", key=f"view_{d.get('event_id', 'unknown')}"):
+                            st.json(d)
                     with col2:
-                        if st.button("✅ Mark Resolved", key=f"resolve_{d['event_id']}"):
-                            st.success(f"Detection {d['event_id']} marked as resolved")
+                        if st.button("✅ Mark Resolved", key=f"resolve_{d.get('event_id', 'unknown')}"):
+                            st.success(f"Detection {d.get('event_id', 'unknown')} marked as resolved")
                     with col3:
-                        if st.button("🚫 Block Source", key=f"block_{d['event_id']}"):
-                            st.warning(f"Source for {d['event_id']} has been blocked")
+                        if st.button("🚫 Block Source", key=f"block_{d.get('event_id', 'unknown')}"):
+                            st.warning(f"Source for {d.get('event_id', 'unknown')} has been blocked")
         else:
             st.info("👆 No detections found. Click 'Run Detection' to analyze your Supabase data for threats.")
     
@@ -454,157 +557,16 @@ class CyberThreatWatch:
             st.subheader("Latest Detections")
             if st.session_state.detections:
                 for detection in st.session_state.detections[:3]:
-                    severity_color = "🔴" if detection.get('severity') == 'critical' else "🟠" if detection.get('severity') == 'high' else "🟡"
+                    severity = detection.get('severity', 'unknown')
+                    severity_color = "🔴" if severity == 'critical' else "🟠" if severity == 'high' else "🟡" if severity == 'medium' else "🟢"
                     detection_type = detection.get('title', 'Unknown')
-                    source_info = detection.get('source_ip', detection.get('domain', 'N/A'))
+                    source_info = detection.get('source_ip', detection.get('domain', detection.get('user', 'N/A')))
                     st.write(f"{severity_color} **{detection_type}** - {source_info}")
             else:
                 st.info("No threat detections yet. Run detection from the Threat Detection page.")
     
-    def render_alerts_page(self):
-        """Render alerts page"""
-        st.header("🚨 Alerts")
-        
-        if st.session_state.alerts_data:
-            for alert in st.session_state.alerts_data:
-                with st.expander(f"{alert.get('type')} - {alert.get('severity')}"):
-                    st.json(alert)
-        else:
-            st.info("No alerts available")
-    
-    def render_reports_page(self):
-        """Render reports page"""
-        st.header("📋 Reports")
-        
-        # Include detection reports
-        if st.session_state.detections:
-            st.subheader("Threat Detection Report")
-            st.write(f"Total detections: {len(st.session_state.detections)}")
-            
-            # Create a simple report
-            detection_df = pd.DataFrame(st.session_state.detections)
-            if not detection_df.empty:
-                st.dataframe(detection_df[['title', 'severity', 'timestamp']])
-        else:
-            st.info("No detection data available for reports. Run threat detection first.")
-    
-    def render_search_page(self):
-        """Render search page"""
-        st.header("🔍 Search")
-        search_term = st.text_input("Search threats, alerts, detections, or indicators")
-        if search_term:
-            # Search across all data sources
-            all_data = (st.session_state.alerts_data + 
-                       st.session_state.threat_data + 
-                       st.session_state.detections)
-            
-            results = [
-                item for item in all_data
-                if search_term.lower() in str(item).lower()
-            ]
-            st.write(f"Found {len(results)} results for '{search_term}'")
-            
-            if results:
-                for result in results:
-                    with st.expander(f"Result: {result.get('title', 'Unknown')}"):
-                        st.json(result)
-    
-    def render_settings_page(self):
-        """Render settings page"""
-        st.header("⚙️ Settings")
-        
-        with st.form("settings_form"):
-            st.subheader("User Preferences")
-            timezone = st.selectbox("Timezone", ["UTC", "EST", "PST", "CET"])
-            refresh_rate = st.slider("Refresh rate (min)", 1, 60, 5)
-            
-            st.subheader("API Configuration")
-            otx_key = st.text_input("OTX API Key", type="password")
-            supabase_url = st.text_input("Supabase URL")
-            supabase_key = st.text_input("Supabase Key", type="password")
-            
-            st.subheader("Threat Detection")
-            auto_detect = st.checkbox("Enable automatic threat detection", value=True)
-            detection_interval = st.slider("Detection interval (min)", 1, 60, 15)
-            
-            if st.form_submit_button("💾 Save Settings"):
-                st.success("Settings saved successfully!")
-    
-    def load_sample_data(self):
-        """Load sample data for demonstration"""
-        sample_alerts = [
-            {
-                "id": 1, "timestamp": datetime.now() - timedelta(hours=2),
-                "severity": "High", "type": "Malware Detection",
-                "source_ip": "192.168.1.100", "description": "Suspicious executable detected"
-            },
-            {
-                "id": 2, "timestamp": datetime.now() - timedelta(hours=5),
-                "severity": "Medium", "type": "Port Scan",
-                "source_ip": "10.0.0.50", "description": "Multiple connection attempts detected"
-            }
-        ]
-        
-        sample_threats = [
-            {
-                "indicator": "malicious-domain.com", "type": "domain",
-                "threat_score": 85, "first_seen": datetime.now() - timedelta(days=30),
-                "last_seen": datetime.now()
-            }
-        ]
-        
-        st.session_state.alerts_data = sample_alerts
-        st.session_state.threat_data = sample_threats
-        st.session_state.detections = []  # Initialize empty detections
-    
-    def main_application(self):
-        """Main application logic - only called when authenticated"""
-        self.render_header()
-        selected_page = self.render_sidebar()
-        
-        if selected_page == "Dashboard":
-            self.render_dashboard_page()
-        elif selected_page == "Alerts":
-            self.render_alerts_page()
-        elif selected_page == "Reports":
-            self.render_reports_page()
-        elif selected_page == "Search":
-            self.render_search_page()
-        elif selected_page == "Threat Detection":
-            self.render_threat_detection_page()
-        elif selected_page == "Settings":
-            self.render_settings_page()
-        
-        if st.sidebar.button("🚪 Logout", type="primary"):
-            st.session_state.authenticated = False
-            st.session_state.username = None
-            st.session_state.user_role = None
-            st.session_state.detections = []
-            st.rerun()
-    
-    def run(self):
-        """Main application runner"""
-        try:
-            if not st.session_state.get('alerts_data'):
-                self.load_sample_data()
-            
-            if not st.session_state.get('auth_init'):
-                self.setup_authentication()
-            
-            if not st.session_state.authenticated:
-                st.sidebar.empty()
-                self.login_section()
-                return
-            else:
-                self.main_application()
-                
-        except Exception as e:
-            logger.error(f"Application error: {e}")
-            st.error("An unexpected error occurred. Please try refreshing the page.")
-            if st.button("Reset Application"):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.rerun()
+    # ... (keep the rest of your methods: render_alerts_page, render_reports_page, etc.)
+    # The other methods remain unchanged from your original code
 
 # Run the application
 if __name__ == "__main__":
