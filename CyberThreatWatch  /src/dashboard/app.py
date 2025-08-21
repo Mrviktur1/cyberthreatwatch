@@ -14,40 +14,6 @@ from typing import Dict, List, Optional, Any
 import logging
 from PIL import Image
 
-# ✅ No need to mess with sys.path here if we run from src/dashboard/
-# sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
-
-# ✅ Import detection functions correctly
-try:
-    from components.detection import (
-        ioc_match,
-        brute_force,
-        looks_like_phishing,
-        impossible_travel,
-        dns_tunnel_detection,
-        honeytoken_access,
-        run_all_detections,
-    )
-    DETECTIONS_AVAILABLE = True
-    logger.info("Successfully imported detection functions from components.detection")
-except ImportError as e:
-    logger.error(f"Failed to import detection functions: {e}")
-    DETECTIONS_AVAILABLE = False
-
-# ✅ Import auth correctly
-try:
-    import components.auth as auth
-    logger.info("Successfully imported auth module")
-except ImportError as e:
-    logger.error(f"Failed to import auth module: {e}")
-
 # Add the src directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
@@ -76,7 +42,7 @@ except ImportError as e:
 
 # Import auth component
 try:
-    from components import auth
+    import auth
     AUTH_AVAILABLE = True
 except ImportError:
     logger.warning("Auth component not found. Using fallback authentication.")
