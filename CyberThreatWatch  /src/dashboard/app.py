@@ -51,86 +51,119 @@ class CyberThreatWatch:
             st.session_state.threat_data = []
         if 'selected_time_range' not in st.session_state:
             st.session_state.selected_time_range = "24h"
+        if 'auth_init' not in st.session_state:
+            st.session_state.auth_init = False
     
     def setup_authentication(self):
         """Setup authentication configuration"""
+        # Only initialize once
+        if st.session_state.get('auth_init'):
+            return
+            
         self.config = {
             'credentials': {
                 'usernames': {
-                    os.getenv('ADMIN_USERNAME', 'admin'): {
-                        'email': os.getenv('ADMIN_EMAIL', 'admin@example.com'),
+                    'admin': {
+                        'email': 'admin@cyberthreatwatch.com',
                         'name': 'Administrator',
-                        'password': os.getenv('ADMIN_PASSWORD', 'admin123')
+                        'password': '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'  # admin123
+                    },
+                    'analyst': {
+                        'email': 'analyst@cyberthreatwatch.com', 
+                        'name': 'Security Analyst',
+                        'password': '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'  # admin123
                     }
                 }
             },
             'cookie': {
                 'name': 'cyberthreatwatch_auth',
-                'key': os.getenv('COOKIE_KEY', 'random_signature_key'),
+                'key': 'random_signature_key_12345',
                 'expiry_days': 1
             },
             'preauthorized': {
-                'emails': [os.getenv('PREAUTHORIZED_EMAILS', '').split(',')]
+                'emails': ['admin@cyberthreatwatch.com', 'analyst@cyberthreatwatch.com']
             }
         }
         
-        self.authenticator = Authenticate(
-            self.config['credentials'],
-            self.config['cookie']['name'],
-            self.config['cookie']['key'],
-            self.config['cookie']['expiry_days'],
-            self.config['preauthorized']
-        )
-    
-    def initialize_clients(self):
-        """Initialize external API clients"""
         try:
-            # Supabase client
-            supabase_url = os.getenv('SUPABASE_URL')
-            supabase_key = os.getenv('SUPABASE_KEY')
-            if supabase_url and supabase_key:
-                self.supabase: Client = create_client(supabase_url, supabase_key)
-            
-            # OTX client
-            otx_key = os.getenv('OTX_API_KEY')
-            if otx_key:
-                self.otx = OTXv2(otx_key)
-                
+            self.authenticator = Authenticate(
+                self.config['credentials'],
+                self.config['cookie']['name'],
+                self.config['cookie']['key'],
+                self.config['cookie']['expiry_days'],
+                self.config['preauthorized']
+            )
+            st.session_state.auth_init = True
         except Exception as e:
-            logger.error(f"Error initializing clients: {e}")
-            st.error("Failed to initialize external services. Some features may be limited.")
+            logger.error(f"Auth setup error: {e}")
+            st.error("Authentication setup failed")
     
     def login_section(self):
         """Render login section - ONLY this should show when not authenticated"""
-        # Clear anything that might be in sidebar/main area
+        # Clear sidebar and main area completely
         st.sidebar.empty()
         
-        # Main login content
+        # Use a custom login form instead of the authenticator widget
         st.title("🔒 CyberThreatWatch Login")
         st.write("Please login to access the threat intelligence dashboard")
         
-        try:
-            name, authentication_status, username = self.authenticator.login('Login', 'main')
+        # Custom login form
+        with st.form("login_form"):
+            username = st.text_input("Username", placeholder="Enter your username")
+            password = st.text_input("Password", type="password", placeholder="Enter your password")
+            submit_button = st.form_submit_button("Login")
             
-            if authentication_status:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.session_state.user_role = 'admin'
-                st.rerun()
+            if submit_button:
+                if self.validate_login(username, password):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.user_role = 'admin' if username == 'admin' else 'analyst'
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid username or password")
+        
+        # Additional options
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📝 Sign Up"):
+                st.info("Please contact your administrator for account creation")
                 
-            elif authentication_status is False:
-                st.error('Username/password is incorrect')
-                
-            elif authentication_status is None:
-                st.warning('Please enter your username and password')
-                
-        except Exception as e:
-            logger.error(f"Login error: {e}")
-            st.error("Authentication service temporarily unavailable")
+        with col2:
+            if st.button("🔑 Forgot Password"):
+                st.info("Please contact your administrator for password reset")
+        
+        # Google sign-in placeholder
+        st.markdown("---")
+        st.write("Or sign in with:")
+        if st.button("Google 🅖", use_container_width=True):
+            st.info("Google sign-in will be available soon")
+    
+    def validate_login(self, username, password):
+        """Simple login validation"""
+        valid_users = {
+            'admin': 'admin123',
+            'analyst': 'admin123'
+        }
+        return username in valid_users and password == valid_users[username]
     
     def render_sidebar(self):
         """Render sidebar only when authenticated"""
-        st.sidebar.title("🛡️ CyberThreatWatch")
+        # Clear sidebar first
+        st.sidebar.empty()
+        
+        # Now build authenticated sidebar with your logo
+        try:
+            # Try to display your logo - only if authenticated!
+            logo_path = "logo.png"  # Change this to your actual logo path
+            if os.path.exists(logo_path):
+                st.sidebar.image(logo_path, use_container_width=True)
+            else:
+                st.sidebar.title("🛡️ CyberThreatWatch")
+        except:
+            st.sidebar.title("🛡️ CyberThreatWatch")
+        
         st.sidebar.markdown("---")
         
         # Navigation
@@ -157,27 +190,43 @@ class CyberThreatWatch:
             index=3
         )
         st.session_state.selected_time_range = time_range
+        st.sidebar.markdown("---")
         
         return pages[selected]
     
     def render_header(self):
         """Render header only when authenticated"""
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
+        # Try to display your signature/logo in header
+        try:
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col1:
+                signature_path = "signature.png"  # Change to your signature path
+                if os.path.exists(signature_path):
+                    st.image(signature_path, width=100)
+            with col2:
+                st.title("🛡️ CyberThreatWatch")
+                st.markdown("Real-time Threat Intelligence Dashboard")
+            with col3:
+                # Additional logo or empty space
+                pass
+        except:
+            # Fallback if images don't load
             st.title("🛡️ CyberThreatWatch")
             st.markdown("Real-time Threat Intelligence Dashboard")
+        
         st.markdown("---")
     
     def render_dashboard_page(self):
         """Render main dashboard page"""
         st.header("📊 Security Dashboard")
         
-        # Simple metrics as fallback
+        # Simple metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Alerts", len(st.session_state.alerts_data))
         with col2:
-            st.metric("High Severity", sum(1 for a in st.session_state.alerts_data if a.get('severity') == 'High'))
+            high_severity = sum(1 for a in st.session_state.alerts_data if a.get('severity') == 'High')
+            st.metric("High Severity", high_severity)
         with col3:
             st.metric("Active Threats", len(st.session_state.threat_data))
         with col4:
@@ -185,13 +234,14 @@ class CyberThreatWatch:
         
         st.markdown("---")
         
-        # Simple data displays
+        # Data displays
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Recent Alerts")
             if st.session_state.alerts_data:
-                for alert in st.session_state.alerts_data[:5]:
-                    st.write(f"**{alert.get('type')}** - {alert.get('severity')}")
+                for alert in st.session_state.alerts_data[:3]:
+                    severity_color = "🔴" if alert.get('severity') == 'High' else "🟡" if alert.get('severity') == 'Medium' else "🟢"
+                    st.write(f"{severity_color} **{alert.get('type')}** - {alert.get('source_ip')}")
             else:
                 st.info("No alerts data")
         
@@ -199,7 +249,9 @@ class CyberThreatWatch:
             st.subheader("Active Threats")
             if st.session_state.threat_data:
                 for threat in st.session_state.threat_data:
-                    st.write(f"**{threat.get('indicator')}** - Score: {threat.get('threat_score')}")
+                    score = threat.get('threat_score', 0)
+                    score_emoji = "🔴" if score > 80 else "🟡" if score > 50 else "🟢"
+                    st.write(f"{score_emoji} **{threat.get('indicator')}** - Score: {score}/100")
             else:
                 st.info("No threat data")
     
@@ -225,7 +277,6 @@ class CyberThreatWatch:
         search_term = st.text_input("Search threats, alerts, or indicators")
         if search_term:
             st.write(f"Search results for: {search_term}")
-            # Simple search implementation
             results = [
                 item for item in st.session_state.alerts_data + st.session_state.threat_data
                 if search_term.lower() in str(item).lower()
@@ -305,11 +356,28 @@ class CyberThreatWatch:
             self.render_settings_page()
         
         # Logout button
-        if st.sidebar.button("🚪 Logout"):
-            self.authenticator.logout('Logout', 'main')
+        if st.sidebar.button("🚪 Logout", type="primary"):
             st.session_state.authenticated = False
-            st.session_state.clear()
+            st.session_state.username = None
+            st.session_state.user_role = None
             st.rerun()
+    
+    def initialize_clients(self):
+        """Initialize external API clients"""
+        try:
+            # Supabase client
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_KEY')
+            if supabase_url and supabase_key:
+                self.supabase: Client = create_client(supabase_url, supabase_key)
+            
+            # OTX client
+            otx_key = os.getenv('OTX_API_KEY')
+            if otx_key:
+                self.otx = OTXv2(otx_key)
+                
+        except Exception as e:
+            logger.error(f"Error initializing clients: {e}")
     
     def run(self):
         """Main application runner"""
@@ -318,9 +386,17 @@ class CyberThreatWatch:
             if not st.session_state.get('alerts_data'):
                 self.load_sample_data()
             
-            # Check authentication
+            # Setup authentication if not done
+            if not st.session_state.get('auth_init'):
+                self.setup_authentication()
+            
+            # Check authentication - THIS IS THE KEY FIX
             if not st.session_state.authenticated:
+                # Clear everything and show only login
+                st.sidebar.empty()
                 self.login_section()
+                # STOP execution here - don't render anything else
+                return
             else:
                 self.main_application()
                 
@@ -328,7 +404,8 @@ class CyberThreatWatch:
             logger.error(f"Application error: {e}")
             st.error("An unexpected error occurred. Please try refreshing the page.")
             if st.button("Reset Application"):
-                st.session_state.clear()
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
                 st.rerun()
 
 # Run the application
