@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import json
 from typing import Dict, List, Optional, Any
 import logging
+from PIL import Image
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +28,9 @@ class CyberThreatWatch:
         self.setup_page_config()
         self.initialize_session_state()
         self.setup_authentication()
+        # Set the correct paths to your assets folder
+        self.logo_path = "assets/CyberThreatWatch.png"
+        self.signature_path = "assets/h_Signa....png"  # Adjust based on actual filename
         
     def setup_page_config(self):
         """Configure Streamlit page settings"""
@@ -56,7 +60,6 @@ class CyberThreatWatch:
     
     def setup_authentication(self):
         """Setup authentication configuration"""
-        # Only initialize once
         if st.session_state.get('auth_init'):
             return
             
@@ -66,12 +69,12 @@ class CyberThreatWatch:
                     'admin': {
                         'email': 'admin@cyberthreatwatch.com',
                         'name': 'Administrator',
-                        'password': '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'  # admin123
+                        'password': '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'
                     },
                     'analyst': {
                         'email': 'analyst@cyberthreatwatch.com', 
                         'name': 'Security Analyst',
-                        'password': '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'  # admin123
+                        'password': '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW'
                     }
                 }
             },
@@ -96,14 +99,31 @@ class CyberThreatWatch:
             st.session_state.auth_init = True
         except Exception as e:
             logger.error(f"Auth setup error: {e}")
-            st.error("Authentication setup failed")
+    
+    def load_image(self, path, width=None):
+        """Safely load image with error handling"""
+        try:
+            if os.path.exists(path):
+                st.sidebar.info(f"Loading image from: {path}")  # Debug info
+                image = Image.open(path)
+                if width:
+                    image = image.resize((width, int(image.height * width / image.width)))
+                return image
+            else:
+                st.sidebar.warning(f"Image not found: {path}")
+                # List files in assets folder for debugging
+                assets_files = os.listdir('assets') if os.path.exists('assets') else []
+                st.sidebar.write("Files in assets folder:", assets_files)
+                return None
+        except Exception as e:
+            logger.error(f"Error loading image {path}: {e}")
+            return None
     
     def login_section(self):
         """Render login section - ONLY this should show when not authenticated"""
-        # Clear sidebar and main area completely
         st.sidebar.empty()
         
-        # Use a custom login form instead of the authenticator widget
+        # Simple login page without any assets
         st.title("🔒 CyberThreatWatch Login")
         st.write("Please login to access the threat intelligence dashboard")
         
@@ -122,7 +142,6 @@ class CyberThreatWatch:
                 else:
                     st.error("❌ Invalid username or password")
         
-        # Additional options
         st.markdown("---")
         col1, col2 = st.columns(2)
         
@@ -133,12 +152,6 @@ class CyberThreatWatch:
         with col2:
             if st.button("🔑 Forgot Password"):
                 st.info("Please contact your administrator for password reset")
-        
-        # Google sign-in placeholder
-        st.markdown("---")
-        st.write("Or sign in with:")
-        if st.button("Google 🅖", use_container_width=True):
-            st.info("Google sign-in will be available soon")
     
     def validate_login(self, username, password):
         """Simple login validation"""
@@ -150,18 +163,17 @@ class CyberThreatWatch:
     
     def render_sidebar(self):
         """Render sidebar only when authenticated"""
-        # Clear sidebar first
         st.sidebar.empty()
         
-        # Now build authenticated sidebar with your logo
-        try:
-            # Try to display your logo - only if authenticated!
-            logo_path = "logo.png"  # Change this to your actual logo path
-            if os.path.exists(logo_path):
-                st.sidebar.image(logo_path, use_container_width=True)
-            else:
+        # Display logo if found
+        logo_image = self.load_image(self.logo_path)
+        if logo_image:
+            try:
+                st.sidebar.image(logo_image, use_container_width=True)
+            except Exception as e:
                 st.sidebar.title("🛡️ CyberThreatWatch")
-        except:
+                logger.warning(f"Could not display logo: {e}")
+        else:
             st.sidebar.title("🛡️ CyberThreatWatch")
         
         st.sidebar.markdown("---")
@@ -178,16 +190,12 @@ class CyberThreatWatch:
         selected = st.sidebar.radio("Navigation", list(pages.keys()))
         st.sidebar.markdown("---")
         
-        # User info
         st.sidebar.write(f"👤 **User:** {st.session_state.username}")
         st.sidebar.write(f"🎯 **Role:** {st.session_state.user_role}")
         st.sidebar.markdown("---")
         
-        # Time range filter
         time_range = st.sidebar.selectbox(
-            "Time Range",
-            ["1h", "6h", "12h", "24h", "7d", "30d"],
-            index=3
+            "Time Range", ["1h", "6h", "12h", "24h", "7d", "30d"], index=3
         )
         st.session_state.selected_time_range = time_range
         st.sidebar.markdown("---")
@@ -196,21 +204,22 @@ class CyberThreatWatch:
     
     def render_header(self):
         """Render header only when authenticated"""
-        # Try to display your signature/logo in header
-        try:
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col1:
-                signature_path = "signature.png"  # Change to your signature path
-                if os.path.exists(signature_path):
-                    st.image(signature_path, width=100)
-            with col2:
-                st.title("🛡️ CyberThreatWatch")
-                st.markdown("Real-time Threat Intelligence Dashboard")
-            with col3:
-                # Additional logo or empty space
-                pass
-        except:
-            # Fallback if images don't load
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            # Try to load signature image
+            signature_image = self.load_image(self.signature_path, width=100)
+            if signature_image:
+                try:
+                    st.image(signature_image, width=100)
+                except Exception as e:
+                    logger.warning(f"Could not display signature: {e}")
+                    # Fallback to logo if signature fails
+                    logo_image = self.load_image(self.logo_path, width=100)
+                    if logo_image:
+                        st.image(logo_image, width=100)
+        
+        with col2:
             st.title("🛡️ CyberThreatWatch")
             st.markdown("Real-time Threat Intelligence Dashboard")
         
@@ -220,7 +229,6 @@ class CyberThreatWatch:
         """Render main dashboard page"""
         st.header("📊 Security Dashboard")
         
-        # Simple metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Total Alerts", len(st.session_state.alerts_data))
@@ -234,7 +242,6 @@ class CyberThreatWatch:
         
         st.markdown("---")
         
-        # Data displays
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Recent Alerts")
@@ -276,12 +283,11 @@ class CyberThreatWatch:
         st.header("🔍 Search")
         search_term = st.text_input("Search threats, alerts, or indicators")
         if search_term:
-            st.write(f"Search results for: {search_term}")
             results = [
                 item for item in st.session_state.alerts_data + st.session_state.threat_data
                 if search_term.lower() in str(item).lower()
             ]
-            st.write(f"Found {len(results)} results")
+            st.write(f"Found {len(results)} results for '{search_term}'")
     
     def render_settings_page(self):
         """Render settings page"""
@@ -304,29 +310,21 @@ class CyberThreatWatch:
         """Load sample data for demonstration"""
         sample_alerts = [
             {
-                "id": 1,
-                "timestamp": datetime.now() - timedelta(hours=2),
-                "severity": "High",
-                "type": "Malware Detection",
-                "source_ip": "192.168.1.100",
-                "description": "Suspicious executable detected"
+                "id": 1, "timestamp": datetime.now() - timedelta(hours=2),
+                "severity": "High", "type": "Malware Detection",
+                "source_ip": "192.168.1.100", "description": "Suspicious executable detected"
             },
             {
-                "id": 2,
-                "timestamp": datetime.now() - timedelta(hours=5),
-                "severity": "Medium",
-                "type": "Port Scan",
-                "source_ip": "10.0.0.50",
-                "description": "Multiple connection attempts detected"
+                "id": 2, "timestamp": datetime.now() - timedelta(hours=5),
+                "severity": "Medium", "type": "Port Scan",
+                "source_ip": "10.0.0.50", "description": "Multiple connection attempts detected"
             }
         ]
         
         sample_threats = [
             {
-                "indicator": "malicious-domain.com",
-                "type": "domain",
-                "threat_score": 85,
-                "first_seen": datetime.now() - timedelta(days=30),
+                "indicator": "malicious-domain.com", "type": "domain",
+                "threat_score": 85, "first_seen": datetime.now() - timedelta(days=30),
                 "last_seen": datetime.now()
             }
         ]
@@ -336,14 +334,9 @@ class CyberThreatWatch:
     
     def main_application(self):
         """Main application logic - only called when authenticated"""
-        # Initialize clients
-        self.initialize_clients()
-        
-        # Render header and sidebar
         self.render_header()
         selected_page = self.render_sidebar()
         
-        # Render selected page
         if selected_page == "Dashboard":
             self.render_dashboard_page()
         elif selected_page == "Alerts":
@@ -355,47 +348,24 @@ class CyberThreatWatch:
         elif selected_page == "Settings":
             self.render_settings_page()
         
-        # Logout button
         if st.sidebar.button("🚪 Logout", type="primary"):
             st.session_state.authenticated = False
             st.session_state.username = None
             st.session_state.user_role = None
             st.rerun()
     
-    def initialize_clients(self):
-        """Initialize external API clients"""
-        try:
-            # Supabase client
-            supabase_url = os.getenv('SUPABASE_URL')
-            supabase_key = os.getenv('SUPABASE_KEY')
-            if supabase_url and supabase_key:
-                self.supabase: Client = create_client(supabase_url, supabase_key)
-            
-            # OTX client
-            otx_key = os.getenv('OTX_API_KEY')
-            if otx_key:
-                self.otx = OTXv2(otx_key)
-                
-        except Exception as e:
-            logger.error(f"Error initializing clients: {e}")
-    
     def run(self):
         """Main application runner"""
         try:
-            # Load sample data if not loaded
             if not st.session_state.get('alerts_data'):
                 self.load_sample_data()
             
-            # Setup authentication if not done
             if not st.session_state.get('auth_init'):
                 self.setup_authentication()
             
-            # Check authentication - THIS IS THE KEY FIX
             if not st.session_state.authenticated:
-                # Clear everything and show only login
                 st.sidebar.empty()
                 self.login_section()
-                # STOP execution here - don't render anything else
                 return
             else:
                 self.main_application()
