@@ -15,6 +15,7 @@ import logging
 from PIL import Image
 import time
 import urllib.parse
+import re
 
 # Add the src directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -255,6 +256,33 @@ def is_authenticated():
     
     return False
 
+# --- Threat Intelligence Detection Functions ---
+def run_detection(logs: list) -> list:
+    """
+    Basic detection engine.
+    Takes a list of log entries and returns alerts if suspicious activity is found.
+    """
+    alerts = []
+
+    # Example rules
+    rules = {
+        "Failed Login": r"failed login",
+        "SQL Injection": r"(SELECT \* FROM|UNION SELECT|DROP TABLE)",
+        "XSS Attack": r"(<script>|javascript:)",
+        "Suspicious IP": r"(192\.168\.0\.13|10\.0\.0\.99)",  # replace with real bad IPs
+    }
+
+    for i, log in enumerate(logs):
+        for rule_name, pattern in rules.items():
+            if re.search(pattern, log, re.IGNORECASE):
+                alerts.append({
+                    "line": i,
+                    "rule": rule_name,
+                    "log": log
+                })
+
+    return alerts
+
 # Set page config
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
@@ -442,6 +470,8 @@ class CyberThreatWatch:
             st.session_state.detection_available = DETECTIONS_AVAILABLE
         if 'detection_method' not in st.session_state:
             st.session_state.detection_method = "comprehensive"
+        if 'log_data' not in st.session_state:
+            st.session_state.log_data = []
         
         # Load sample data if not loaded
         if not st.session_state.alerts_data:
@@ -655,6 +685,71 @@ class CyberThreatWatch:
         else:
             st.info("👆 No detections found. Click 'Run Detection' to analyze your data.")
     
+    def render_log_analysis_page(self):
+        """Render log analysis page with basic detection"""
+        st.header("📊 Log Analysis")
+        
+        # Log upload section
+        st.subheader("Upload Log Files")
+        uploaded_file = st.file_uploader("Choose a log file", type=['txt', 'log', 'csv'])
+        
+        if uploaded_file is not None:
+            # Read the file
+            stringio = uploaded_file.getvalue().decode("utf-8")
+            st.session_state.log_data = stringio.splitlines()
+            
+            st.success(f"✅ Loaded {len(st.session_state.log_data)} log entries")
+            
+            # Show sample of logs
+            with st.expander("View first 10 log entries"):
+                for i, line in enumerate(st.session_state.log_data[:10]):
+                    st.code(f"{i+1}: {line}")
+        
+        # Manual log input
+        st.subheader("Or enter logs manually")
+        manual_logs = st.text_area("Paste log data here (one per line)", height=150)
+        
+        if manual_logs:
+            st.session_state.log_data = manual_logs.split('\n')
+            st.success(f"✅ Loaded {len(st.session_state.log_data)} log entries")
+        
+        # Run detection button
+        if st.button("🔍 Analyze Logs", type="primary") and st.session_state.log_data:
+            with st.spinner("Analyzing logs for threats..."):
+                results = run_detection(st.session_state.log_data)
+                
+            if results:
+                st.error(f"⚠️ {len(results)} threats detected!")
+                
+                # Group by rule type
+                rule_counts = {}
+                for r in results:
+                    rule_counts[r['rule']] = rule_counts.get(r['rule'], 0) + 1
+                
+                # Show summary
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Threats", len(results))
+                with col2:
+                    st.metric("Rule Types", len(rule_counts))
+                with col3:
+                    most_common = max(rule_counts, key=rule_counts.get) if rule_counts else "None"
+                    st.metric("Most Common", most_common)
+                
+                # Show detailed results
+                st.subheader("Detailed Findings")
+                for result in results:
+                    with st.expander(f"Line {result['line']+1}: {result['rule']}"):
+                        st.write(f"**Rule:** {result['rule']}")
+                        st.write(f"**Log Entry:** {result['log']}")
+                        st.write(f"**Line Number:** {result['line']+1}")
+            else:
+                st.success("✅ No threats detected in the logs!")
+        elif st.session_state.log_data:
+            st.info("👆 Click 'Analyze Logs' to run detection on your log data")
+        else:
+            st.info("📝 Upload a log file or enter logs manually to begin analysis")
+    
     def load_sample_data(self):
         """Load sample data for demonstration"""
         sample_alerts = [
@@ -683,8 +778,19 @@ class CyberThreatWatch:
             }
         ]
         
+        sample_logs = [
+            "[INFO] User admin logged in successfully from 192.168.1.10",
+            "[WARN] Failed login attempt for user 'root' from 10.0.0.99",
+            "[ERROR] Database query failed: SELECT * FROM users WHERE id = 1 OR 1=1",
+            "[INFO] File uploaded: report.pdf",
+            "[ALERT] XSS attempt detected in form input: <script>alert('test')</script>",
+            "[INFO] DNS query for example.com",
+            "[WARN] Multiple failed login attempts for user 'admin' from 192.168.0.13"
+        ]
+        
         st.session_state.alerts_data = sample_alerts
         st.session_state.threat_data = sample_threats
+        st.session_state.log_data = sample_logs
 
 # --- Main Application Logic ---
 if not is_authenticated():
@@ -711,7 +817,7 @@ else:
     # --- Page Navigation ---
     page = st.sidebar.radio(
         "Navigation",
-        ["Dashboard", "Search", "Alerts", "Reports", "Threat Detection", "Settings"]
+        ["Dashboard", "Search", "Alerts", "Reports", "Threat Detection", "Log Analysis", "Settings"]
     )
 
     # Initialize the app
@@ -763,6 +869,9 @@ else:
 
     elif page == "Threat Detection":
         app.render_threat_detection_page()
+
+    elif page == "Log Analysis":
+        app.render_log_analysis_page()
 
     elif page == "Settings":
         st.subheader("⚙️ Settings")
