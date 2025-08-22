@@ -37,7 +37,6 @@ except ImportError as e:
     try:
         from detections import ioc_match, brute_force, looks_like_phishing, impossible_travel, dns_tunnel_detection, honeytoken_access, run_all_detections
         DETECTIONS_AVAILABLE = True
-        logger.info("Successfully imported detection functions from local detections.py")
     except ImportError:
         logger.warning("Detection functions not available. Please ensure detection.py exists.")
         DETECTIONS_AVAILABLE = False
@@ -64,48 +63,59 @@ def init_supabase() -> Client:
 supabase = init_supabase()
 
 # --- Authentication Functions ---
-def signup(email: str, password: str):
-    """Sign up new user"""
+def signup(email: str, password: str, captcha_token: str = None):
+    """Sign up new user with CAPTCHA support"""
     try:
-        # Check if we need CAPTCHA (after multiple failed attempts)
-        if st.session_state.get('login_attempts', 0) >= 3:
-            if not verify_captcha():
-                st.error("CAPTCHA verification failed. Please try again.")
-                return False
-                
-        response = supabase.auth.sign_up({"email": email, "password": password})
+        # Prepare signup data
+        signup_data = {"email": email, "password": password}
+        
+        # Add CAPTCHA token if provided
+        if captcha_token:
+            signup_data["options"] = {"captchaToken": captcha_token}
+        
+        response = supabase.auth.sign_up(signup_data)
+        
         if response.user:
-            st.session_state.login_attempts = 0  # Reset counter on success
+            st.session_state.login_attempts = 0
             st.success("✅ Signup successful! Please check your email to confirm.")
             return True
         else:
             st.error("❌ Signup failed. Try again.")
             return False
     except Exception as e:
-        st.error(f"Error: {e}")
+        error_msg = str(e).lower()
+        
+        if "captcha" in error_msg:
+            st.error("🔒 CAPTCHA verification required. Please complete the verification.")
+            st.session_state.requires_captcha = True
+            st.session_state.signup_email = email
+            st.session_state.signup_password = password
+        else:
+            st.error(f"Error: {e}")
         return False
 
-def login(email: str, password: str):
-    """Login existing user"""
+def login(email: str, password: str, captcha_token: str = None):
+    """Login existing user with CAPTCHA support"""
     try:
         # Check rate limiting
         current_time = time.time()
-        if (current_time - st.session_state.get('last_attempt_time', 0)) < 2:  # 2 seconds between attempts
+        if (current_time - st.session_state.get('last_attempt_time', 0)) < 2:
             st.error("⚠️ Too many attempts. Please wait a moment.")
             return False
             
-        # Check if we need CAPTCHA (after multiple failed attempts)
-        if st.session_state.get('login_attempts', 0) >= 2:
-            if not verify_captcha():
-                st.error("CAPTCHA verification failed. Please try again.")
-                return False
-                
-        response = supabase.auth.sign_in_with_password(
-            {"email": email, "password": password}
-        )
+        # Prepare login data
+        login_data = {"email": email, "password": password}
+        
+        # Add CAPTCHA token if provided
+        if captcha_token:
+            login_data["options"] = {"captchaToken": captcha_token}
+        
+        response = supabase.auth.sign_in_with_password(login_data)
+        
         if response.user:
             st.session_state.user = response.user
-            st.session_state.login_attempts = 0  # Reset counter on success
+            st.session_state.login_attempts = 0
+            st.session_state.requires_captcha = False
             st.success(f"✅ Welcome {response.user.email}")
             return True
         else:
@@ -120,28 +130,57 @@ def login(email: str, password: str):
         
         if "captcha" in error_msg:
             st.error("🔒 CAPTCHA verification required. Please complete the verification.")
-            # Trigger CAPTCHA on next attempt
-            st.session_state.login_attempts = 3
+            st.session_state.requires_captcha = True
+            st.session_state.login_email = email
+            st.session_state.login_password = password
         else:
             st.error(f"Error: {e}")
         return False
 
-def verify_captcha():
-    """Verify CAPTCHA - This is a placeholder for actual CAPTCHA implementation"""
-    # In a real implementation, you would integrate with hCaptcha, reCAPTCHA, etc.
-    # For demo purposes, we'll use a simple checkbox
-    with st.popover("🔒 Security Verification", use_container_width=True):
-        st.write("Please verify you're not a robot")
-        captcha_verified = st.checkbox("I'm not a robot")
-        if st.button("Verify"):
-            if captcha_verified:
-                st.session_state.login_attempts = 0
-                st.success("Verification successful!")
-                return True
+def handle_captcha_verification(auth_type="login"):
+    """Handle CAPTCHA verification process - FIXED VERSION"""
+    st.warning("🔒 CAPTCHA verification required")
+    
+    # Use a form for the CAPTCHA verification
+    with st.form("captcha_verification_form"):
+        st.write("Please complete the CAPTCHA verification")
+        
+        # Simple CAPTCHA implementation
+        captcha_code = st.text_input("Enter the CAPTCHA code shown below:", 
+                                   placeholder="Enter code")
+        
+        # Display a simple CAPTCHA
+        st.markdown("""
+        <div style='background-color: #f0f0f0; padding: 10px; border-radius: 5px; 
+                    text-align: center; font-family: monospace; font-size: 20px; 
+                    letter-spacing: 5px; margin: 10px 0;'>
+        ABC123
+        </div>
+        <p><small>Enter <strong>ABC123</strong> to verify</small></p>
+        """, unsafe_allow_html=True)
+        
+        # Use form_submit_button instead of regular button
+        verify_submit = st.form_submit_button("Verify CAPTCHA")
+        
+        if verify_submit:
+            if captcha_code == "ABC123":  # Simple mock verification
+                st.session_state.requires_captcha = False
+                
+                # Retry the auth operation with the mock token
+                if auth_type == "login":
+                    success = login(st.session_state.login_email, 
+                                  st.session_state.login_password, 
+                                  "mock_captcha_token_123")
+                    if success:
+                        st.rerun()
+                else:
+                    success = signup(st.session_state.signup_email, 
+                                   st.session_state.signup_password, 
+                                   "mock_captcha_token_123")
+                    if success:
+                        st.rerun()
             else:
-                st.error("Please complete the verification")
-                return False
-    return False
+                st.error("Invalid CAPTCHA code. Please try again.")
 
 def reset_password(email: str):
     """Trigger Supabase password reset"""
@@ -158,6 +197,7 @@ def logout():
     try:
         supabase.auth.sign_out()
         st.session_state.user = None
+        st.session_state.requires_captcha = False
         st.success("👋 Logged out successfully!")
         return True
     except Exception as e:
@@ -169,7 +209,6 @@ def is_authenticated():
     if st.session_state.get("user"):
         return True
     
-    # Try to get existing session
     try:
         if supabase:
             session = supabase.auth.get_session()
@@ -180,32 +219,6 @@ def is_authenticated():
         pass
     
     return False
-
-# --- Fallback Auth Functions ---
-def fallback_login(email: str, password: str):
-    """Fallback login for testing"""
-    if email == "admin@cyberthreatwatch.com" and password == "admin123":
-        st.session_state.user = {"email": email, "role": "admin"}
-        st.session_state.authenticated = True
-        st.success("✅ Login successful (fallback)")
-        st.rerun()
-    else:
-        st.error("❌ Invalid credentials")
-
-def fallback_signup(email: str, password: str):
-    """Fallback signup for testing"""
-    st.info("📧 Signup would send verification email in production")
-
-def fallback_reset_password(email: str):
-    """Fallback password reset"""
-    st.info("📧 Password reset email would be sent in production")
-
-def fallback_logout():
-    """Fallback logout"""
-    st.session_state.pop("user", None)
-    st.session_state.authenticated = False
-    st.success("👋 Logged out successfully!")
-    st.rerun()
 
 # Set page config
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
@@ -221,6 +234,8 @@ if "show_signup" not in st.session_state:
     st.session_state.show_signup = False
 if "show_reset" not in st.session_state:
     st.session_state.show_reset = False
+if "requires_captcha" not in st.session_state:
+    st.session_state.requires_captcha = False
 
 # --- Authentication UI ---
 def show_login_form():
@@ -258,6 +273,11 @@ def show_login_form():
     st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>CyberThreatWatch</h1>", unsafe_allow_html=True)
     st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Login Portal</h2>", unsafe_allow_html=True)
     
+    # Handle CAPTCHA requirement
+    if st.session_state.get('requires_captcha', False):
+        handle_captcha_verification("login")
+        return
+    
     with st.form("login_form"):
         email = st.text_input("Email", placeholder="Enter your email", value="timukeenemmoh@gmail.com")
         password = st.text_input("Password", type="password", placeholder="Enter your password")
@@ -266,10 +286,15 @@ def show_login_form():
         if submit:
             if email and password:
                 if supabase:
-                    if login(email, password):
-                        st.rerun()
+                    login(email, password)
                 else:
-                    fallback_login(email, password)
+                    # Fallback for testing
+                    if email == "admin@cyberthreatwatch.com" and password == "admin123":
+                        st.session_state.user = {"email": email, "role": "admin"}
+                        st.success("✅ Login successful (fallback)")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid credentials")
             else:
                 st.error("Please enter both email and password")
     
@@ -278,37 +303,48 @@ def show_login_form():
     with col1:
         if st.button("Sign Up", use_container_width=True):
             st.session_state.show_signup = True
+            st.session_state.requires_captcha = False
             st.rerun()
     with col2:
         if st.button("Reset Password", use_container_width=True):
             st.session_state.show_reset = True
+            st.session_state.requires_captcha = False
             st.rerun()
 
 def show_signup_form():
-    """Display signup form"""
+    """Display signup form - FIXED VERSION"""
     st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Create Account</h2>", unsafe_allow_html=True)
     
+    # Handle CAPTCHA requirement
+    if st.session_state.get('requires_captcha', False):
+        handle_captcha_verification("signup")
+        return
+    
+    # Use a form for signup
     with st.form("signup_form"):
-        email = st.text_input("Email", placeholder="Enter your email")
+        email = st.text_input("Email", placeholder="Enter your email", value="TINUKEENEMOH@GMAIL.COM")
         password = st.text_input("Password", type="password", placeholder="Create a password")
         confirm_password = st.text_input("Confirm Password", type="password", placeholder="Confirm your password")
+        
+        # Use form_submit_button instead of regular button
         submit = st.form_submit_button("Sign Up", use_container_width=True)
         
         if submit:
             if email and password and confirm_password:
                 if password == confirm_password:
                     if supabase:
-                        if signup(email, password):
-                            st.rerun()
+                        signup(email, password)
                     else:
-                        fallback_signup(email, password)
+                        st.info("📧 Signup would send verification email in production")
                 else:
                     st.error("Passwords do not match")
             else:
                 st.error("Please fill all fields")
     
+    # Back button outside the form
     if st.button("Back to Login"):
         st.session_state.show_signup = False
+        st.session_state.requires_captcha = False
         st.rerun()
 
 def show_reset_form():
@@ -321,7 +357,7 @@ def show_reset_form():
             if supabase:
                 reset_password(email)
             else:
-                fallback_reset_password(email)
+                st.info("📧 Password reset email would be sent in production")
         else:
             st.error("Please enter your email")
     
