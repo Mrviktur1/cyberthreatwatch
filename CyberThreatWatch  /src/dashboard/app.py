@@ -13,6 +13,8 @@ import json
 from typing import Dict, List, Optional, Any
 import logging
 from PIL import Image
+import time
+import urllib.parse
 
 # Add the src directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -40,14 +42,6 @@ except ImportError as e:
         logger.warning("Detection functions not available. Please ensure detection.py exists.")
         DETECTIONS_AVAILABLE = False
 
-# Import auth component
-try:
-    from components import auth
-    AUTH_AVAILABLE = True
-except ImportError:
-    logger.warning("Auth component not found. Using fallback authentication.")
-    AUTH_AVAILABLE = False
-
 # --- Supabase Client ---
 @st.cache_resource
 def init_supabase() -> Client:
@@ -69,11 +63,129 @@ def init_supabase() -> Client:
 # Initialize Supabase
 supabase = init_supabase()
 
+# --- Authentication Functions ---
+def signup(email: str, password: str):
+    """Sign up new user"""
+    try:
+        # Check if we need CAPTCHA (after multiple failed attempts)
+        if st.session_state.get('login_attempts', 0) >= 3:
+            if not verify_captcha():
+                st.error("CAPTCHA verification failed. Please try again.")
+                return False
+                
+        response = supabase.auth.sign_up({"email": email, "password": password})
+        if response.user:
+            st.session_state.login_attempts = 0  # Reset counter on success
+            st.success("✅ Signup successful! Please check your email to confirm.")
+            return True
+        else:
+            st.error("❌ Signup failed. Try again.")
+            return False
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
+
+def login(email: str, password: str):
+    """Login existing user"""
+    try:
+        # Check rate limiting
+        current_time = time.time()
+        if (current_time - st.session_state.get('last_attempt_time', 0)) < 2:  # 2 seconds between attempts
+            st.error("⚠️ Too many attempts. Please wait a moment.")
+            return False
+            
+        # Check if we need CAPTCHA (after multiple failed attempts)
+        if st.session_state.get('login_attempts', 0) >= 2:
+            if not verify_captcha():
+                st.error("CAPTCHA verification failed. Please try again.")
+                return False
+                
+        response = supabase.auth.sign_in_with_password(
+            {"email": email, "password": password}
+        )
+        if response.user:
+            st.session_state.user = response.user
+            st.session_state.login_attempts = 0  # Reset counter on success
+            st.success(f"✅ Welcome {response.user.email}")
+            return True
+        else:
+            st.session_state.login_attempts = st.session_state.get('login_attempts', 0) + 1
+            st.session_state.last_attempt_time = current_time
+            st.error("❌ Invalid credentials.")
+            return False
+    except Exception as e:
+        st.session_state.login_attempts = st.session_state.get('login_attempts', 0) + 1
+        st.session_state.last_attempt_time = time.time()
+        error_msg = str(e).lower()
+        
+        if "captcha" in error_msg:
+            st.error("🔒 CAPTCHA verification required. Please complete the verification.")
+            # Trigger CAPTCHA on next attempt
+            st.session_state.login_attempts = 3
+        else:
+            st.error(f"Error: {e}")
+        return False
+
+def verify_captcha():
+    """Verify CAPTCHA - This is a placeholder for actual CAPTCHA implementation"""
+    # In a real implementation, you would integrate with hCaptcha, reCAPTCHA, etc.
+    # For demo purposes, we'll use a simple checkbox
+    with st.popover("🔒 Security Verification", use_container_width=True):
+        st.write("Please verify you're not a robot")
+        captcha_verified = st.checkbox("I'm not a robot")
+        if st.button("Verify"):
+            if captcha_verified:
+                st.session_state.login_attempts = 0
+                st.success("Verification successful!")
+                return True
+            else:
+                st.error("Please complete the verification")
+                return False
+    return False
+
+def reset_password(email: str):
+    """Trigger Supabase password reset"""
+    try:
+        supabase.auth.reset_password_for_email(email)
+        st.success("📧 Password reset email sent. Check your inbox.")
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
+
+def logout():
+    """Logout user"""
+    try:
+        supabase.auth.sign_out()
+        st.session_state.user = None
+        st.success("👋 Logged out successfully!")
+        return True
+    except Exception as e:
+        st.error(f"Error during logout: {e}")
+        return False
+
+def is_authenticated():
+    """Check if user is authenticated"""
+    if st.session_state.get("user"):
+        return True
+    
+    # Try to get existing session
+    try:
+        if supabase:
+            session = supabase.auth.get_session()
+            if session and session.user:
+                st.session_state.user = session.user
+                return True
+    except:
+        pass
+    
+    return False
+
 # --- Fallback Auth Functions ---
 def fallback_login(email: str, password: str):
     """Fallback login for testing"""
     if email == "admin@cyberthreatwatch.com" and password == "admin123":
-        st.session_state["user"] = {"email": email, "role": "admin"}
+        st.session_state.user = {"email": email, "role": "admin"}
         st.session_state.authenticated = True
         st.success("✅ Login successful (fallback)")
         st.rerun()
@@ -83,10 +195,6 @@ def fallback_login(email: str, password: str):
 def fallback_signup(email: str, password: str):
     """Fallback signup for testing"""
     st.info("📧 Signup would send verification email in production")
-
-def fallback_login_with_google():
-    """Fallback Google login"""
-    st.info("🔐 Google OAuth would redirect in production")
 
 def fallback_reset_password(email: str):
     """Fallback password reset"""
@@ -102,269 +210,353 @@ def fallback_logout():
 # Set page config
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
-# --- Session check ---
+# Initialize session state for authentication
 if "user" not in st.session_state:
-    # User not logged in → show login/signup page
-    st.title("🔐 CyberThreatWatch Login Portal")
+    st.session_state.user = None
+if "login_attempts" not in st.session_state:
+    st.session_state.login_attempts = 0
+if "last_attempt_time" not in st.session_state:
+    st.session_state.last_attempt_time = 0
+if "show_signup" not in st.session_state:
+    st.session_state.show_signup = False
+if "show_reset" not in st.session_state:
+    st.session_state.show_reset = False
 
-    menu = st.sidebar.radio(
-        "Authentication",
-        ["Login", "Signup", "Google Login", "Reset Password"]
-    )
-
-    if menu == "Login":
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        if st.button("Login"):
-            if AUTH_AVAILABLE:
-                auth.login(email, password)
+# --- Authentication UI ---
+def show_login_form():
+    """Display login form"""
+    st.markdown("""
+    <style>
+    .main {
+        background-color: #0E1117;
+    }
+    .stTextInput input, .stTextInput input:focus {
+        background-color: #1E293B;
+        color: white;
+        border: 1px solid #334155;
+    }
+    .css-1y4p8pa {
+        background-color: #0E1117;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Try to load logo
+    logo_paths = ["assets/CyberThreatWatch.png", "assets/h_Signa....png"]
+    logo_image = None
+    for path in logo_paths:
+        try:
+            if os.path.exists(path):
+                logo_image = Image.open(path)
+                break
+        except:
+            pass
+    
+    if logo_image:
+        st.image(logo_image, width=150)
+    
+    st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>CyberThreatWatch</h1>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Login Portal</h2>", unsafe_allow_html=True)
+    
+    with st.form("login_form"):
+        email = st.text_input("Email", placeholder="Enter your email", value="timukeenemmoh@gmail.com")
+        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        submit = st.form_submit_button("Login", use_container_width=True)
+        
+        if submit:
+            if email and password:
+                if supabase:
+                    if login(email, password):
+                        st.rerun()
+                else:
+                    fallback_login(email, password)
             else:
-                fallback_login(email, password)
+                st.error("Please enter both email and password")
+    
+    # Additional options
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Sign Up", use_container_width=True):
+            st.session_state.show_signup = True
+            st.rerun()
+    with col2:
+        if st.button("Reset Password", use_container_width=True):
+            st.session_state.show_reset = True
+            st.rerun()
 
-    elif menu == "Signup":
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        if st.button("Sign Up"):
-            if AUTH_AVAILABLE:
-                auth.signup(email, password)
+def show_signup_form():
+    """Display signup form"""
+    st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Create Account</h2>", unsafe_allow_html=True)
+    
+    with st.form("signup_form"):
+        email = st.text_input("Email", placeholder="Enter your email")
+        password = st.text_input("Password", type="password", placeholder="Create a password")
+        confirm_password = st.text_input("Confirm Password", type="password", placeholder="Confirm your password")
+        submit = st.form_submit_button("Sign Up", use_container_width=True)
+        
+        if submit:
+            if email and password and confirm_password:
+                if password == confirm_password:
+                    if supabase:
+                        if signup(email, password):
+                            st.rerun()
+                    else:
+                        fallback_signup(email, password)
+                else:
+                    st.error("Passwords do not match")
             else:
-                fallback_signup(email, password)
-
-    elif menu == "Google Login":
-        if AUTH_AVAILABLE:
-            auth.login_with_google()
-        else:
-            fallback_login_with_google()
-
-    elif menu == "Reset Password":
-        email = st.text_input("Enter your email")
-        if st.button("Send Reset Link"):
-            if AUTH_AVAILABLE:
-                auth.reset_password(email)
-            else:
-                fallback_reset_password(email)
-
-else:
-    # User logged in → show main app
-    st.sidebar.success(f"👋 Welcome {st.session_state['user'].email if hasattr(st.session_state['user'], 'email') else st.session_state['user']['email']}")
-
-    if st.sidebar.button("Logout"):
-        if AUTH_AVAILABLE:
-            auth.logout()
-        else:
-            fallback_logout()
+                st.error("Please fill all fields")
+    
+    if st.button("Back to Login"):
+        st.session_state.show_signup = False
         st.rerun()
 
-    # --- MAIN DASHBOARD ---
-    class CyberThreatWatch:
-        def __init__(self):
-            # Set the correct paths to your assets folder
-            self.logo_path = "assets/CyberThreatWatch.png"
-            self.signature_path = "assets/h_Signa....png"
-            
-            # Initialize session state variables if not exists
-            if 'alerts_data' not in st.session_state:
-                st.session_state.alerts_data = []
-            if 'threat_data' not in st.session_state:
-                st.session_state.threat_data = []
-            if 'detections' not in st.session_state:
-                st.session_state.detections = []
-            if 'detection_available' not in st.session_state:
-                st.session_state.detection_available = DETECTIONS_AVAILABLE
-            if 'detection_method' not in st.session_state:
-                st.session_state.detection_method = "comprehensive"
-            
-            # Load sample data if not loaded
-            if not st.session_state.alerts_data:
-                self.load_sample_data()
-            
-            # Initialize geoip lookup
-            self.geoip_lookup = self.simple_geoip_lookup
-        
-        def simple_geoip_lookup(self, ip):
-            """Simple placeholder for geoip lookup"""
-            geoip_mock_data = {
-                "192.168.1.100": (40.7128, -74.0060),
-                "10.0.0.50": (34.0522, -118.2437),
-                "172.16.0.25": (51.5074, -0.1278),
-            }
-            return geoip_mock_data.get(ip, None)
-        
-        def load_image(self, path, width=None):
-            """Safely load image with error handling"""
-            try:
-                if os.path.exists(path):
-                    image = Image.open(path)
-                    if width:
-                        image = image.resize((width, int(image.height * width / image.width)))
-                    return image
-                return None
-            except Exception as e:
-                logger.error(f"Error loading image {path}: {e}")
-                return None
-        
-        def render_header(self):
-            """Render header"""
-            col1, col2 = st.columns([1, 3])
-            
-            with col1:
-                signature_image = self.load_image(self.signature_path, width=100)
-                if signature_image:
-                    st.image(signature_image, width=100)
-                else:
-                    logo_image = self.load_image(self.logo_path, width=100)
-                    if logo_image:
-                        st.image(logo_image, width=100)
-            
-            with col2:
-                st.title("🛡️ CyberThreatWatch")
-                st.markdown("Real-time Threat Intelligence Dashboard")
-            
-            st.markdown("---")
-        
-        def run_threat_detection(self):
-            """Run threat detection algorithms"""
-            if not supabase:
-                st.error("❌ Supabase not connected. Please check your configuration.")
-                return []
-            
-            if not st.session_state.detection_available:
-                st.error("❌ Detection functions not available.")
-                return []
-            
-            try:
-                # Load events + IOCs
-                with st.spinner("Loading events and IOCs from Supabase..."):
-                    events_result = supabase.table("events").select("*").execute()
-                    iocs_result = supabase.table("iocs").select("*").execute()
-                    
-                    events = events_result.data
-                    iocs = iocs_result.data
-                    
-                    logger.info(f"Loaded {len(events)} events and {len(iocs)} IOCs")
-                
-                # Run detections based on selected method
-                if st.session_state.detection_method.lower() == "comprehensive":
-                    return self.run_comprehensive_detections(events, iocs)
-                else:
-                    return self.run_basic_detections(events, iocs)
-                
-            except Exception as e:
-                logger.error(f"Threat detection error: {e}")
-                st.error(f"Error running threat detection: {str(e)}")
-                return []
-        
-        def run_basic_detections(self, events, iocs):
-            """Run basic detection rules"""
-            detections = []
-
-            # IOC matching
-            for e in events:
-                result = ioc_match(e, iocs)
-                if result:
-                    detections.append(result)
-
-            # Brute force rule
-            brute_force_detections = brute_force(events)
-            detections.extend(brute_force_detections)
-
-            # Simple phishing heuristic
-            for e in events:
-                if e.get("domain") and looks_like_phishing(e["domain"]):
-                    detections.append({
-                        "title": "Suspicious Domain",
-                        "event_id": e.get("id", "unknown"),
-                        "severity": "medium",
-                        "domain": e["domain"],
-                        "timestamp": e.get("timestamp", datetime.now().isoformat()),
-                        "description": "Domain matches phishing patterns"
-                    })
-            
-            return detections
-        
-        def run_comprehensive_detections(self, events, iocs):
-            """Run comprehensive detection rules"""
-            all_detections = []
-
-            # Use the run_all_detections function if available
-            try:
-                if 'run_all_detections' in globals():
-                    all_detections = run_all_detections(events, iocs, self.geoip_lookup)
-                    return all_detections
-            except Exception as e:
-                logger.warning(f"run_all_detections failed: {e}")
-            
-            # Fallback: run individual detection rules
-            for e in events:
-                result = ioc_match(e, iocs)
-                if result:
-                    all_detections.append(result)
-
-            all_detections.extend(brute_force(events))
-
-            # Other detection methods...
-            for e in events:
-                if e.get("domain") and looks_like_phishing(e["domain"]):
-                    all_detections.append({
-                        "title": "Suspicious Phishing Domain",
-                        "event_id": e.get("id", "unknown"),
-                        "severity": "medium",
-                        "domain": e["domain"],
-                        "timestamp": e.get("timestamp", datetime.now().isoformat()),
-                        "description": "Domain matches phishing patterns",
-                        "rule_id": "PHISH-001",
-                        "technique": "T1566"
-                    })
-            
-            return all_detections
-        
-        def render_threat_detection_page(self):
-            """Render threat detection page"""
-            st.header("🛡️ Real-time Threat Detection")
-            
-            col1, col2, col3 = st.columns([2, 1, 1])
-            with col1:
-                st.info("Run automated threat detection against your Supabase data.")
-            
-            with col2:
-                detection_method = st.selectbox(
-                    "Method", 
-                    ["Basic", "Comprehensive"],
-                    key="detection_method_select"
-                )
-                st.session_state.detection_method = detection_method.lower()
-            
-            with col3:
-                if st.button("🔄 Run Detection", type="primary", use_container_width=True):
-                    with st.spinner("Running threat detection..."):
-                        st.session_state.detections = self.run_threat_detection()
-            
-            if st.session_state.detections:
-                st.subheader(f"📋 Detection Results ({len(st.session_state.detections)} findings)")
-                # Display detection results...
+def show_reset_form():
+    """Display password reset form"""
+    st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Reset Password</h2>", unsafe_allow_html=True)
+    
+    email = st.text_input("Email", placeholder="Enter your email")
+    if st.button("Send Reset Link", use_container_width=True):
+        if email:
+            if supabase:
+                reset_password(email)
             else:
-                st.info("👆 No detections found. Click 'Run Detection' to analyze your data.")
+                fallback_reset_password(email)
+        else:
+            st.error("Please enter your email")
+    
+    if st.button("Back to Login"):
+        st.session_state.show_reset = False
+        st.rerun()
+
+# --- MAIN APPLICATION ---
+class CyberThreatWatch:
+    def __init__(self):
+        # Set the correct paths to your assets folder
+        self.logo_path = "assets/CyberThreatWatch.png"
+        self.signature_path = "assets/h_Signa....png"
         
-        def load_sample_data(self):
-            """Load sample data for demonstration"""
-            sample_alerts = [
-                {
-                    "id": 1, "timestamp": datetime.now() - timedelta(hours=2),
-                    "severity": "High", "type": "Malware Detection",
-                    "source_ip": "192.168.1.100", "description": "Suspicious executable detected"
-                }
-            ]
+        # Initialize session state variables if not exists
+        if 'alerts_data' not in st.session_state:
+            st.session_state.alerts_data = []
+        if 'threat_data' not in st.session_state:
+            st.session_state.threat_data = []
+        if 'detections' not in st.session_state:
+            st.session_state.detections = []
+        if 'detection_available' not in st.session_state:
+            st.session_state.detection_available = DETECTIONS_AVAILABLE
+        if 'detection_method' not in st.session_state:
+            st.session_state.detection_method = "comprehensive"
+        
+        # Load sample data if not loaded
+        if not st.session_state.alerts_data:
+            self.load_sample_data()
+        
+        # Initialize geoip lookup
+        self.geoip_lookup = self.simple_geoip_lookup
+    
+    def simple_geoip_lookup(self, ip):
+        """Simple placeholder for geoip lookup"""
+        geoip_mock_data = {
+            "192.168.1.100": (40.7128, -74.0060),
+            "10.0.0.50": (34.0522, -118.2437),
+            "172.16.0.25": (51.5074, -0.1278),
+        }
+        return geoip_mock_data.get(ip, None)
+    
+    def load_image(self, path, width=None):
+        """Safely load image with error handling"""
+        try:
+            if os.path.exists(path):
+                image = Image.open(path)
+                if width:
+                    image = image.resize((width, int(image.height * width / image.width)))
+                return image
+            return None
+        except Exception as e:
+            logger.error(f"Error loading image {path}: {e}")
+            return None
+    
+    def render_header(self):
+        """Render header"""
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            signature_image = self.load_image(self.signature_path, width=100)
+            if signature_image:
+                st.image(signature_image, width=100)
+            else:
+                logo_image = self.load_image(self.logo_path, width=100)
+                if logo_image:
+                    st.image(logo_image, width=100)
+        
+        with col2:
+            st.title("🛡️ CyberThreatWatch")
+            st.markdown("Real-time Threat Intelligence Dashboard")
+        
+        st.markdown("---")
+    
+    def run_threat_detection(self):
+        """Run threat detection algorithms"""
+        if not supabase:
+            st.error("❌ Supabase not connected. Please check your configuration.")
+            return []
+        
+        if not st.session_state.detection_available:
+            st.error("❌ Detection functions not available.")
+            return []
+        
+        try:
+            # Load events + IOCs
+            with st.spinner("Loading events and IOCs from Supabase..."):
+                events_result = supabase.table("events").select("*").execute()
+                iocs_result = supabase.table("iocs").select("*").execute()
+                
+                events = events_result.data
+                iocs = iocs_result.data
+                
+                logger.info(f"Loaded {len(events)} events and {len(iocs)} IOCs")
             
-            sample_threats = [
-                {
-                    "indicator": "malicious-domain.com", "type": "domain",
-                    "threat_score": 85, "first_seen": datetime.now() - timedelta(days=30),
-                    "last_seen": datetime.now()
-                }
-            ]
+            # Run detections based on selected method
+            if st.session_state.detection_method.lower() == "comprehensive":
+                return self.run_comprehensive_detections(events, iocs)
+            else:
+                return self.run_basic_detections(events, iocs)
             
-            st.session_state.alerts_data = sample_alerts
-            st.session_state.threat_data = sample_threats
+        except Exception as e:
+            logger.error(f"Threat detection error: {e}")
+            st.error(f"Error running threat detection: {str(e)}")
+            return []
+    
+    def run_basic_detections(self, events, iocs):
+        """Run basic detection rules"""
+        detections = []
+
+        # IOC matching
+        for e in events:
+            result = ioc_match(e, iocs)
+            if result:
+                detections.append(result)
+
+        # Brute force rule
+        brute_force_detections = brute_force(events)
+        detections.extend(brute_force_detections)
+
+        # Simple phishing heuristic
+        for e in events:
+            if e.get("domain") and looks_like_phishing(e["domain"]):
+                detections.append({
+                    "title": "Suspicious Domain",
+                    "event_id": e.get("id", "unknown"),
+                    "severity": "medium",
+                    "domain": e["domain"],
+                    "timestamp": e.get("timestamp", datetime.now().isoformat()),
+                    "description": "Domain matches phishing patterns"
+                })
+        
+        return detections
+    
+    def run_comprehensive_detections(self, events, iocs):
+        """Run comprehensive detection rules"""
+        all_detections = []
+
+        # Use the run_all_detections function if available
+        try:
+            if 'run_all_detections' in globals():
+                all_detections = run_all_detections(events, iocs, self.geoip_lookup)
+                return all_detections
+        except Exception as e:
+            logger.warning(f"run_all_detections failed: {e}")
+        
+        # Fallback: run individual detection rules
+        for e in events:
+            result = ioc_match(e, iocs)
+            if result:
+                all_detections.append(result)
+
+        all_detections.extend(brute_force(events))
+
+        # Other detection methods...
+        for e in events:
+            if e.get("domain") and looks_like_phishing(e["domain"]):
+                all_detections.append({
+                    "title": "Suspicious Phishing Domain",
+                    "event_id": e.get("id", "unknown"),
+                    "severity": "medium",
+                    "domain": e["domain"],
+                    "timestamp": e.get("timestamp", datetime.now().isoformat()),
+                    "description": "Domain matches phishing patterns",
+                    "rule_id": "PHISH-001",
+                    "technique": "T1566"
+                })
+        
+        return all_detections
+    
+    def render_threat_detection_page(self):
+        """Render threat detection page"""
+        st.header("🛡️ Real-time Threat Detection")
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.info("Run automated threat detection against your Supabase data.")
+        
+        with col2:
+            detection_method = st.selectbox(
+                "Method", 
+                ["Basic", "Comprehensive"],
+                key="detection_method_select"
+            )
+            st.session_state.detection_method = detection_method.lower()
+        
+        with col3:
+            if st.button("🔄 Run Detection", type="primary", use_container_width=True):
+                with st.spinner("Running threat detection..."):
+                    st.session_state.detections = self.run_threat_detection()
+        
+        if st.session_state.detections:
+            st.subheader(f"📋 Detection Results ({len(st.session_state.detections)} findings)")
+            # Display detection results...
+        else:
+            st.info("👆 No detections found. Click 'Run Detection' to analyze your data.")
+    
+    def load_sample_data(self):
+        """Load sample data for demonstration"""
+        sample_alerts = [
+            {
+                "id": 1, "timestamp": datetime.now() - timedelta(hours=2),
+                "severity": "High", "type": "Malware Detection",
+                "source_ip": "192.168.1.100", "description": "Suspicious executable detected"
+            }
+        ]
+        
+        sample_threats = [
+            {
+                "indicator": "malicious-domain.com", "type": "domain",
+                "threat_score": 85, "first_seen": datetime.now() - timedelta(days=30),
+                "last_seen": datetime.now()
+            }
+        ]
+        
+        st.session_state.alerts_data = sample_alerts
+        st.session_state.threat_data = sample_threats
+
+# --- Main Application Logic ---
+if not is_authenticated():
+    # Show authentication interface
+    if st.session_state.show_signup:
+        show_signup_form()
+    elif st.session_state.show_reset:
+        show_reset_form()
+    else:
+        show_login_form()
+else:
+    # User is authenticated - show main dashboard
+    user_email = st.session_state.user.email if hasattr(st.session_state.user, 'email') else st.session_state.user.get('email', 'User')
+    st.sidebar.success(f"👋 Welcome {user_email}")
+
+    if st.sidebar.button("Logout"):
+        logout()
+        st.rerun()
 
     # --- Page Navigation ---
     page = st.sidebar.radio(
