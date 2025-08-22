@@ -77,6 +77,7 @@ def signup(email: str, password: str, captcha_token: str = None):
         
         if response.user:
             st.session_state.login_attempts = 0
+            st.session_state.captcha_verified = True
             st.success("✅ Signup successful! Please check your email to confirm.")
             return True
         else:
@@ -86,13 +87,14 @@ def signup(email: str, password: str, captcha_token: str = None):
         error_msg = str(e).lower()
         
         if "captcha" in error_msg:
-            st.error("🔒 CAPTCHA verification required. Please complete the verification.")
             st.session_state.requires_captcha = True
+            st.session_state.captcha_verified = False
             st.session_state.signup_email = email
             st.session_state.signup_password = password
+            return False
         else:
             st.error(f"Error: {e}")
-        return False
+            return False
 
 def login(email: str, password: str, captcha_token: str = None):
     """Login existing user with CAPTCHA support"""
@@ -116,6 +118,7 @@ def login(email: str, password: str, captcha_token: str = None):
             st.session_state.user = response.user
             st.session_state.login_attempts = 0
             st.session_state.requires_captcha = False
+            st.session_state.captcha_verified = True
             st.success(f"✅ Welcome {response.user.email}")
             return True
         else:
@@ -129,41 +132,46 @@ def login(email: str, password: str, captcha_token: str = None):
         error_msg = str(e).lower()
         
         if "captcha" in error_msg:
-            st.error("🔒 CAPTCHA verification required. Please complete the verification.")
             st.session_state.requires_captcha = True
+            st.session_state.captcha_verified = False
             st.session_state.login_email = email
             st.session_state.login_password = password
+            return False
         else:
             st.error(f"Error: {e}")
-        return False
+            return False
 
 def handle_captcha_verification(auth_type="login"):
-    """Handle CAPTCHA verification process - FIXED VERSION"""
+    """Handle CAPTCHA verification process"""
     st.warning("🔒 CAPTCHA verification required")
     
     # Use a form for the CAPTCHA verification
     with st.form("captcha_verification_form"):
-        st.write("Please complete the CAPTCHA verification")
+        st.write("Please complete the security verification")
         
         # Simple CAPTCHA implementation
-        captcha_code = st.text_input("Enter the CAPTCHA code shown below:", 
-                                   placeholder="Enter code")
+        captcha_code = st.text_input("Enter the security code shown below:", 
+                                   placeholder="Enter code here")
         
         # Display a simple CAPTCHA
         st.markdown("""
-        <div style='background-color: #f0f0f0; padding: 10px; border-radius: 5px; 
-                    text-align: center; font-family: monospace; font-size: 20px; 
-                    letter-spacing: 5px; margin: 10px 0;'>
+        <div style='background-color: #f0f0f0; padding: 15px; border-radius: 8px; 
+                    text-align: center; font-family: monospace; font-size: 24px; 
+                    font-weight: bold; letter-spacing: 8px; margin: 15px 0;
+                    border: 2px solid #ddd;'>
         ABC123
         </div>
-        <p><small>Enter <strong>ABC123</strong> to verify</small></p>
+        <p style='text-align: center; color: #666; font-size: 14px;'>
+        Type <strong>ABC123</strong> in the field above to verify
+        </p>
         """, unsafe_allow_html=True)
         
         # Use form_submit_button instead of regular button
-        verify_submit = st.form_submit_button("Verify CAPTCHA")
+        verify_submit = st.form_submit_button("✅ Verify Security Code", use_container_width=True)
         
         if verify_submit:
-            if captcha_code == "ABC123":  # Simple mock verification
+            if captcha_code.strip().upper() == "ABC123":
+                st.session_state.captcha_verified = True
                 st.session_state.requires_captcha = False
                 
                 # Retry the auth operation with the mock token
@@ -171,16 +179,18 @@ def handle_captcha_verification(auth_type="login"):
                     success = login(st.session_state.login_email, 
                                   st.session_state.login_password, 
                                   "mock_captcha_token_123")
-                    if success:
-                        st.rerun()
                 else:
                     success = signup(st.session_state.signup_email, 
                                    st.session_state.signup_password, 
                                    "mock_captcha_token_123")
-                    if success:
-                        st.rerun()
+                
+                if success:
+                    st.rerun()
+                return success
             else:
-                st.error("Invalid CAPTCHA code. Please try again.")
+                st.error("❌ Invalid security code. Please try again.")
+                return False
+    return False
 
 def reset_password(email: str):
     """Trigger Supabase password reset"""
@@ -196,8 +206,10 @@ def logout():
     """Logout user"""
     try:
         supabase.auth.sign_out()
-        st.session_state.user = None
-        st.session_state.requires_captcha = False
+        for key in ['user', 'requires_captcha', 'captcha_verified', 'login_email', 
+                   'login_password', 'signup_email', 'signup_password']:
+            if key in st.session_state:
+                del st.session_state[key]
         st.success("👋 Logged out successfully!")
         return True
     except Exception as e:
@@ -236,6 +248,8 @@ if "show_reset" not in st.session_state:
     st.session_state.show_reset = False
 if "requires_captcha" not in st.session_state:
     st.session_state.requires_captcha = False
+if "captcha_verified" not in st.session_state:
+    st.session_state.captcha_verified = False
 
 # --- Authentication UI ---
 def show_login_form():
@@ -273,9 +287,11 @@ def show_login_form():
     st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>CyberThreatWatch</h1>", unsafe_allow_html=True)
     st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Login Portal</h2>", unsafe_allow_html=True)
     
-    # Handle CAPTCHA requirement
-    if st.session_state.get('requires_captcha', False):
-        handle_captcha_verification("login")
+    # Handle CAPTCHA requirement - show only once
+    if st.session_state.get('requires_captcha', False) and not st.session_state.get('captcha_verified', False):
+        if handle_captcha_verification("login"):
+            return
+        # Don't show the login form if CAPTCHA is being handled
         return
     
     with st.form("login_form"):
@@ -304,20 +320,24 @@ def show_login_form():
         if st.button("Sign Up", use_container_width=True):
             st.session_state.show_signup = True
             st.session_state.requires_captcha = False
+            st.session_state.captcha_verified = False
             st.rerun()
     with col2:
         if st.button("Reset Password", use_container_width=True):
             st.session_state.show_reset = True
             st.session_state.requires_captcha = False
+            st.session_state.captcha_verified = False
             st.rerun()
 
 def show_signup_form():
-    """Display signup form - FIXED VERSION"""
+    """Display signup form"""
     st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Create Account</h2>", unsafe_allow_html=True)
     
-    # Handle CAPTCHA requirement
-    if st.session_state.get('requires_captcha', False):
-        handle_captcha_verification("signup")
+    # Handle CAPTCHA requirement - show only once
+    if st.session_state.get('requires_captcha', False) and not st.session_state.get('captcha_verified', False):
+        if handle_captcha_verification("signup"):
+            return
+        # Don't show the signup form if CAPTCHA is being handled
         return
     
     # Use a form for signup
@@ -345,6 +365,7 @@ def show_signup_form():
     if st.button("Back to Login"):
         st.session_state.show_signup = False
         st.session_state.requires_captcha = False
+        st.session_state.captcha_verified = False
         st.rerun()
 
 def show_reset_form():
