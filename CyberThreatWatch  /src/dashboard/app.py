@@ -42,7 +42,7 @@ except ImportError as e:
 
 # Import auth component
 try:
-    import auth
+    from components import auth
     AUTH_AVAILABLE = True
 except ImportError:
     logger.warning("Auth component not found. Using fallback authentication.")
