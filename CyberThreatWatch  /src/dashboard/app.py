@@ -62,9 +62,23 @@ def init_supabase() -> Client:
 # Initialize Supabase
 supabase = init_supabase()
 
+# --- Admin Bypass Configuration ---
+ADMIN_BYPASS_ENABLED = True  # Set to False to disable admin bypass in production
+ADMIN_CREDENTIALS = {
+    "admin@cyberthreatwatch.com": "admin123",
+    "developer@cyberthreatwatch.com": "dev123",
+    "test@cyberthreatwatch.com": "test123"
+}
+
 # --- Authentication Functions ---
 def signup(email: str, password: str, captcha_token: str = None):
     """Sign up new user with CAPTCHA support"""
+    # Check for admin bypass first
+    if ADMIN_BYPASS_ENABLED and email in ADMIN_CREDENTIALS and password == ADMIN_CREDENTIALS[email]:
+        st.session_state.user = {"email": email, "role": "admin", "bypass": True}
+        st.success("✅ Admin login successful (bypass mode)")
+        return True
+        
     try:
         # Prepare signup data
         signup_data = {"email": email, "password": password}
@@ -98,6 +112,12 @@ def signup(email: str, password: str, captcha_token: str = None):
 
 def login(email: str, password: str, captcha_token: str = None):
     """Login existing user with CAPTCHA support"""
+    # Check for admin bypass first
+    if ADMIN_BYPASS_ENABLED and email in ADMIN_CREDENTIALS and password == ADMIN_CREDENTIALS[email]:
+        st.session_state.user = {"email": email, "role": "admin", "bypass": True}
+        st.success("✅ Admin login successful (bypass mode)")
+        return True
+        
     try:
         # Check rate limiting
         current_time = time.time()
@@ -205,7 +225,10 @@ def reset_password(email: str):
 def logout():
     """Logout user"""
     try:
-        supabase.auth.sign_out()
+        # Only call Supabase logout if not using admin bypass
+        if not st.session_state.user.get('bypass', False):
+            supabase.auth.sign_out()
+        
         for key in ['user', 'requires_captcha', 'captcha_verified', 'login_email', 
                    'login_password', 'signup_email', 'signup_password']:
             if key in st.session_state:
@@ -287,6 +310,21 @@ def show_login_form():
     st.markdown("<h1 style='text-align: center; color: #FF4B4B;'>CyberThreatWatch</h1>", unsafe_allow_html=True)
     st.markdown("<h2 style='text-align: center; margin-bottom: 2rem;'>Login Portal</h2>", unsafe_allow_html=True)
     
+    # Admin bypass info
+    if ADMIN_BYPASS_ENABLED:
+        with st.expander("🔧 Developer Access (Admin Bypass)"):
+            st.info("Use these credentials for development:")
+            st.code("""
+            Email: admin@cyberthreatwatch.com
+            Password: admin123
+            
+            Email: developer@cyberthreatwatch.com  
+            Password: dev123
+            
+            Email: test@cyberthreatwatch.com
+            Password: test123
+            """)
+    
     # Handle CAPTCHA requirement - show only once
     if st.session_state.get('requires_captcha', False) and not st.session_state.get('captcha_verified', False):
         if handle_captcha_verification("login"):
@@ -295,8 +333,8 @@ def show_login_form():
         return
     
     with st.form("login_form"):
-        email = st.text_input("Email", placeholder="Enter your email", value="timukeenemmoh@gmail.com")
-        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        email = st.text_input("Email", placeholder="Enter your email", value="admin@cyberthreatwatch.com")
+        password = st.text_input("Password", type="password", placeholder="Enter your password", value="admin123")
         submit = st.form_submit_button("Login", use_container_width=True)
         
         if submit:
@@ -449,13 +487,16 @@ class CyberThreatWatch:
         
         with col2:
             st.title("🛡️ CyberThreatWatch")
+            # Show admin badge if using bypass
+            if st.session_state.user and st.session_state.user.get('bypass', False):
+                st.markdown(f"<p style='color: #FF4B4B; font-weight: bold;'>👑 Admin Mode (Bypass Active)</p>", unsafe_allow_html=True)
             st.markdown("Real-time Threat Intelligence Dashboard")
         
         st.markdown("---")
     
     def run_threat_detection(self):
         """Run threat detection algorithms"""
-        if not supabase:
+        if not supabase and not st.session_state.user.get('bypass', False):
             st.error("❌ Supabase not connected. Please check your configuration.")
             return []
         
@@ -464,7 +505,31 @@ class CyberThreatWatch:
             return []
         
         try:
-            # Load events + IOCs
+            # If using admin bypass, use sample data
+            if st.session_state.user.get('bypass', False):
+                st.info("🔧 Using sample data (Admin Bypass Mode)")
+                # Generate some mock detections
+                mock_detections = [
+                    {
+                        "title": "Suspicious Login Attempt",
+                        "event_id": "mock-001",
+                        "severity": "high",
+                        "source_ip": "192.168.1.100",
+                        "timestamp": datetime.now().isoformat(),
+                        "description": "Multiple failed login attempts detected"
+                    },
+                    {
+                        "title": "Phishing Domain Detected",
+                        "event_id": "mock-002", 
+                        "severity": "medium",
+                        "domain": "fake-login.com",
+                        "timestamp": (datetime.now() - timedelta(hours=1)).isoformat(),
+                        "description": "Domain matches known phishing patterns"
+                    }
+                ]
+                return mock_detections
+            
+            # Load events + IOCs from Supabase
             with st.spinner("Loading events and IOCs from Supabase..."):
                 events_result = supabase.table("events").select("*").execute()
                 iocs_result = supabase.table("iocs").select("*").execute()
@@ -553,9 +618,13 @@ class CyberThreatWatch:
         """Render threat detection page"""
         st.header("🛡️ Real-time Threat Detection")
         
+        # Show admin mode notice
+        if st.session_state.user.get('bypass', False):
+            st.warning("🔧 Admin Bypass Mode: Using mock data for demonstration")
+        
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            st.info("Run automated threat detection against your Supabase data.")
+            st.info("Run automated threat detection against your data.")
         
         with col2:
             detection_method = st.selectbox(
@@ -572,7 +641,17 @@ class CyberThreatWatch:
         
         if st.session_state.detections:
             st.subheader(f"📋 Detection Results ({len(st.session_state.detections)} findings)")
-            # Display detection results...
+            for detection in st.session_state.detections:
+                severity_color = {
+                    "high": "🔴",
+                    "medium": "🟡", 
+                    "low": "🟢"
+                }.get(detection.get('severity', 'low'), '⚪')
+                
+                st.write(f"{severity_color} **{detection.get('title', 'Unknown')}**")
+                st.write(f"   *{detection.get('description', 'No description')}*")
+                st.write(f"   **Time:** {detection.get('timestamp', 'Unknown')}")
+                st.write("---")
         else:
             st.info("👆 No detections found. Click 'Run Detection' to analyze your data.")
     
@@ -583,6 +662,11 @@ class CyberThreatWatch:
                 "id": 1, "timestamp": datetime.now() - timedelta(hours=2),
                 "severity": "High", "type": "Malware Detection",
                 "source_ip": "192.168.1.100", "description": "Suspicious executable detected"
+            },
+            {
+                "id": 2, "timestamp": datetime.now() - timedelta(hours=1),
+                "severity": "Medium", "type": "Suspicious Login",
+                "source_ip": "10.0.0.50", "description": "Multiple failed login attempts"
             }
         ]
         
@@ -591,6 +675,11 @@ class CyberThreatWatch:
                 "indicator": "malicious-domain.com", "type": "domain",
                 "threat_score": 85, "first_seen": datetime.now() - timedelta(days=30),
                 "last_seen": datetime.now()
+            },
+            {
+                "indicator": "192.168.1.100", "type": "ip",
+                "threat_score": 72, "first_seen": datetime.now() - timedelta(days=7),
+                "last_seen": datetime.now() - timedelta(hours=2)
             }
         ]
         
@@ -610,6 +699,10 @@ else:
     # User is authenticated - show main dashboard
     user_email = st.session_state.user.email if hasattr(st.session_state.user, 'email') else st.session_state.user.get('email', 'User')
     st.sidebar.success(f"👋 Welcome {user_email}")
+    
+    # Show admin badge in sidebar if using bypass
+    if st.session_state.user.get('bypass', False):
+        st.sidebar.warning("🔧 Admin Bypass Active")
 
     if st.sidebar.button("Logout"):
         logout()
@@ -682,6 +775,10 @@ else:
             otx_key = st.text_input("OTX API Key", type="password")
             supabase_url = st.text_input("Supabase URL")
             supabase_key = st.text_input("Supabase Key", type="password")
+            
+            # Admin bypass toggle (only visible to admin users)
+            if st.session_state.user.get('bypass', False) or st.session_state.user.get('role') == 'admin':
+                admin_bypass = st.toggle("Enable Admin Bypass", value=ADMIN_BYPASS_ENABLED)
             
             if st.form_submit_button("💾 Save Settings"):
                 st.success("Settings saved successfully!")
