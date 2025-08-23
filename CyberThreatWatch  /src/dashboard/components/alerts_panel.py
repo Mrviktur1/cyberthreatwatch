@@ -1,105 +1,67 @@
-import dash_bootstrap_components as dbc
-from dash import html, dcc, Output, Input, callback
-from supabase import create_client, Client
-import os
+import streamlit as st
+import pandas as pd
+from typing import List, Dict
+import logging
 
+logger = logging.getLogger(__name__)
 
 class AlertsPanel:
-    def __init__(self):
-        # Supabase connection
-        self.url: str = os.getenv("SUPABASE_URL")
-        self.key: str = os.getenv("SUPABASE_KEY")
-        self.supabase: Client = create_client(self.url, self.key)
+    def __init__(self, supabase=None, otx=None):
+        self.supabase = supabase
+        self.otx = otx
 
-    def fetch_alerts(self, limit=10):
-        """Fetch latest alerts from Supabase"""
+    def fetch_supabase_alerts(self) -> List[Dict]:
+        """Fetch alerts from Supabase if available"""
         try:
-            response = (
-                self.supabase.table("alerts")
-                .select("*")
-                .order("timestamp", desc=True)
-                .limit(limit)
-                .execute()
-            )
-            return response.data or []
+            if self.supabase:
+                response = self.supabase.table("alerts").select("*").execute()
+                if response.data:
+                    return response.data
+            return []
         except Exception as e:
-            print("Error fetching alerts:", e)
+            logger.error(f"Supabase fetch error: {e}")
             return []
 
-    def layout(self):
-        return dbc.Card(
-            [
-                dbc.CardHeader(
-                    [
-                        html.H4("Recent Alerts", className="d-inline"),
-                        dbc.Badge(id="alerts-count", color="danger", className="ms-2"),
-                    ]
-                ),
-                dbc.CardBody(
-                    [
-                        dbc.ListGroup(id="alerts-list", flush=True),
-                        # Auto-refresh every 30 seconds
-                        dcc.Interval(id="alerts-interval", interval=30 * 1000, n_intervals=0),
-                    ]
-                ),
-            ]
+    def fetch_otx_iocs(self, query: str) -> List[Dict]:
+        """Search OTX for indicators of compromise"""
+        try:
+            if self.otx:
+                results = self.otx.search_pulses(query)
+                return [{"pulse_id": r["id"], "name": r["name"]} for r in results.get("results", [])]
+            return []
+        except Exception as e:
+            logger.error(f"OTX search error: {e}")
+            return []
+
+    def render(self, alerts_data: List[Dict]):
+        """Render alerts table and controls"""
+        st.write("### Active Alerts")
+
+        # Pull from Supabase if available
+        supabase_alerts = self.fetch_supabase_alerts()
+        combined_alerts = alerts_data + supabase_alerts
+
+        if not combined_alerts:
+            st.info("✅ No alerts at the moment.")
+            return
+
+        df = pd.DataFrame(combined_alerts)
+        st.dataframe(df, use_container_width=True)
+
+        # CSV export
+        st.download_button(
+            "⬇️ Download Alerts CSV",
+            df.to_csv(index=False),
+            file_name="alerts_export.csv",
+            mime="text/csv"
         )
 
-
-# === Dash Callbacks ===
-@callback(
-    Output("alerts-list", "children"),
-    Output("alerts-count", "children"),
-    Input("alerts-interval", "n_intervals"),
-)
-def update_alerts(n):
-    """Refresh alerts list every 30 seconds"""
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_KEY")
-    supabase: Client = create_client(url, key)
-
-    try:
-        response = (
-            supabase.table("alerts")
-            .select("*")
-            .order("timestamp", desc=True)
-            .limit(10)
-            .execute()
-        )
-        alerts_data = response.data or []
-    except Exception as e:
-        print("Error fetching alerts:", e)
-        return [html.P("⚠️ Error loading alerts")], "0"
-
-    alert_rows = []
-    for alert in alerts_data:
-        sev = alert.get("severity", "low").capitalize()
-        badge_color = (
-            "danger"
-            if sev.lower() == "critical"
-            else "warning"
-            if sev.lower() in ["high", "medium"]
-            else "info"
-        )
-
-        row = dbc.ListGroupItem(
-            [
-                dbc.Row(
-                    [
-                        dbc.Col(
-                            dbc.Badge(sev, color=badge_color, className="me-1"),
-                            width=2,
-                        ),
-                        dbc.Col(alert.get("rule", "Unknown Rule"), width=3),
-                        dbc.Col(str(alert.get("details", {})), width=3),
-                        dbc.Col(alert.get("technique", ""), width=2),
-                        dbc.Col(str(alert.get("timestamp", "")), width=2),
-                    ]
-                )
-            ],
-            action=True,
-            className="alert-item",
-        )
-        alert_rows.append(row)
-
-    return alert_rows, str(len(alerts_data))
+        # OTX search
+        st.write("### Threat Intel Lookup")
+        query = st.text_input("Search OTX (IP, Domain, Hash)")
+        if st.button("Search OTX") and query:
+            results = self.fetch_otx_iocs(query)
+            if results:
+                st.json(results)
+            else:
+                st.warning("No results found in OTX.")
