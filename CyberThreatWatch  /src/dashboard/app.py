@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 import logging
 from PIL import Image
 
-# Add the src directory to Python path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+# Add the parent directory to Python path to enable absolute imports
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-# Import the AlertsPanel
-from components.alerts_panel import AlertsPanel
+# Import the AlertsPanel using absolute import
+from dashboard.components.alerts_panel import AlertsPanel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -115,7 +115,7 @@ if page == "Dashboard":
             pd.DataFrame(st.session_state.alerts_data),
             x="severity", title="Alerts by Severity"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')  # FIXED: use_container_width=True → width='stretch'
 
 elif page == "Search":
     st.subheader("🔎 Threat Search")
@@ -150,7 +150,8 @@ elif page == "Reports":
     # PDF Report Generator
     if st.button("📄 Generate PDF Report"):
         try:
-            from utils.report_generator import generate_report
+            # Use absolute import for report generator
+            from dashboard.utils.report_generator import generate_report
 
             pdf_path = generate_report(
                 alerts=st.session_state.alerts_data,
