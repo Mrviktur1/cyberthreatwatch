@@ -1,6 +1,6 @@
 import dash_bootstrap_components as dbc
 from dash import html
-from ..components.reports import ReportsManager
+from src.dashboard.components.reports import ReportsManager
 
 class ReportsPage:
     def __init__(self):

@@ -1,6 +1,6 @@
 import dash_bootstrap_components as dbc
 from dash import html
-from ..components.alerts_panel import AlertsPanel
+from src.dashboard.components.alerts_panel import AlertsPanel
 
 class AlertsPage:
     def __init__(self):

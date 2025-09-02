@@ -1,7 +1,7 @@
 import dash_bootstrap_components as dbc
 from dash import html, dcc
-from ..components.search_bar import SearchBar
-from ..components.data_visualizations import DataVisualizations
+from src.dashboard.components.search_bar import SearchBar
+from src.dashboard.components.data_visualizations import DataVisualizations
 
 class SearchPage:
     def __init__(self, app):
