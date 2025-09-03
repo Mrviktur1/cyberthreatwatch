@@ -17,6 +17,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 # Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
 from dashboard.utils.otx_collector import collect_otx_alerts
+from dashboard.utils import auth  # 🔐 authentication module
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,8 +34,6 @@ def init_supabase() -> Client:
             url: str = st.secrets["SUPABASE_URL"]
             key: str = st.secrets["SUPABASE_KEY"]
             return create_client(url, key)
-        else:
-            st.error("❌ Missing Supabase credentials in secrets.toml")
         return None
     except Exception as e:
         logger.error(f"Supabase connection error: {e}")
@@ -46,10 +45,8 @@ supabase = init_supabase()
 @st.cache_resource
 def init_otx():
     try:
-        if 'OTX_API_KEY' in st.secrets and st.secrets["OTX_API_KEY"]:
+        if 'OTX_API_KEY' in st.secrets:
             return OTXv2(st.secrets["OTX_API_KEY"])
-        else:
-            st.warning("⚠️ OTX_API_KEY missing in secrets.toml")
         return None
     except Exception as e:
         logger.error(f"OTX init error: {e}")
@@ -99,6 +96,13 @@ class CyberThreatWatch:
             st.markdown("Real-time Threat Intelligence Dashboard")
         st.markdown("---")
 
+
+# --- 🔐 Authentication Gate ---
+if not auth.is_authenticated():
+    auth.show_auth_page()
+    st.stop()
+
+
 # --- Navigation ---
 page = st.sidebar.radio(
     "Navigation",
@@ -113,11 +117,8 @@ if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
     if st.button("🔄 Fetch Latest Threats from OTX"):
-        if otx and supabase:
-            collect_otx_alerts(otx, supabase)
-            st.success("✅ Fetched latest OTX alerts!")
-        else:
-            st.error("❌ OTX or Supabase not initialized. Please check your secrets.")
+        collect_otx_alerts(otx, supabase)
+        st.success("Fetched latest OTX alerts!")
 
     if supabase:
         try:
@@ -194,7 +195,7 @@ if page == "Dashboard":
                         )
                         map_fig.update_layout(
                             mapbox_style="carto-positron",
-                            title="🌍 Global Attack Map"
+                            title="Global Attack Map"
                         )
                         st.plotly_chart(map_fig, use_container_width=True)
                     else:
@@ -217,8 +218,6 @@ elif page == "Search":
         if otx:
             results = otx.search_pulses(query)
             st.json(results)
-        else:
-            st.error("❌ OTX client not initialized")
 
 # --- Alerts Page ---
 elif page == "Alerts":
