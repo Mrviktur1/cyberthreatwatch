@@ -53,6 +53,22 @@ def init_otx():
 
 otx = init_otx()
 
+# --- Quick OTX Connectivity Test ---
+if otx:
+    try:
+        test_query = "ransomware"
+        test_results = otx.search_pulses(test_query)
+        if test_results and "results" in test_results:
+            st.sidebar.success(
+                f"✅ OTX API connected. Test query '{test_query}' returned {len(test_results['results'])} results."
+            )
+        else:
+            st.sidebar.warning("⚠️ OTX API connected, but no results returned.")
+    except Exception as e:
+        st.sidebar.error(f"❌ OTX test query failed: {e}")
+else:
+    st.sidebar.error("❌ OTX API not initialized. Check your OTX_API_KEY in secrets.toml")
+
 # --- Session Data ---
 if 'alerts_data' not in st.session_state:
     st.session_state.alerts_data = []
