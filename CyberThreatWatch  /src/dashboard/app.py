@@ -9,12 +9,12 @@ from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
-from streamlit_autorefresh import st_autorefresh
+from streamlit_autorefresh import st_autorefresh  # auto-refresh
 
 # Add the parent directory to Python path to enable absolute imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-# Import the AlertsPanel and OTX collector
+# Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
 from dashboard.utils.otx_collector import collect_otx_alerts
 
@@ -63,8 +63,8 @@ if 'threat_data' not in st.session_state:
 # --- Main App Config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
-# Enable auto-refresh every 60s
-st_autorefresh(interval=60 * 1000, key="data_refresh")
+# Auto-refresh every 60 seconds
+st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
 class CyberThreatWatch:
     def __init__(self):
@@ -104,7 +104,7 @@ page = st.sidebar.radio(
 app = CyberThreatWatch()
 app.render_header()
 
-# --- Dashboard ---
+# --- Dashboard Page ---
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
@@ -166,6 +166,33 @@ if page == "Dashboard":
                     )
                     st.plotly_chart(type_fig, use_container_width=True)
 
+                # GeoIP World Map
+                if "source_ip" in df.columns:
+                    from dashboard.utils.geoip_helper import ip_to_location
+
+                    geo_data = []
+                    for ip in df["source_ip"].dropna().unique():
+                        loc = ip_to_location(ip)
+                        if loc:
+                            geo_data.append(loc)
+
+                    if geo_data:
+                        geo_df = pd.DataFrame(geo_data)
+                        map_fig = px.scatter_mapbox(
+                            geo_df,
+                            lat="lat", lon="lon",
+                            hover_name="ip",
+                            hover_data=["country"],
+                            zoom=1, height=500
+                        )
+                        map_fig.update_layout(
+                            mapbox_style="carto-positron",
+                            title="Global Attack Map"
+                        )
+                        st.plotly_chart(map_fig, use_container_width=True)
+                    else:
+                        st.info("No GeoIP data available.")
+
             else:
                 st.info("✅ Connected to Supabase, but no alerts found.")
 
@@ -174,7 +201,7 @@ if page == "Dashboard":
     else:
         st.warning("⚠️ Supabase not connected. Please check your credentials.")
 
-# --- Search ---
+# --- Search Page ---
 elif page == "Search":
     st.subheader("🔎 Threat Search")
     query = st.text_input("Enter IP, Domain, or Hash")
@@ -184,23 +211,15 @@ elif page == "Search":
             results = otx.search_pulses(query)
             st.json(results)
 
-# --- Alerts ---
+# --- Alerts Page ---
 elif page == "Alerts":
     app.alerts_panel.render(st.session_state.alerts_data)
 
-# --- Reports ---
+# --- Reports Page ---
 elif page == "Reports":
     st.subheader("📝 Reports")
 
-    if supabase:
-        response = supabase.table("alerts").select("*").execute()
-        alerts_data = response.data if response.data else []
-    else:
-        alerts_data = []
-
-    df = pd.DataFrame(alerts_data)
-
-    # CSV download
+    df = pd.DataFrame(st.session_state.alerts_data)
     st.download_button(
         "⬇️ Download Alerts CSV",
         df.to_csv(index=False),
@@ -208,23 +227,19 @@ elif page == "Reports":
         mime="text/csv"
     )
 
-    # Analyst Notes
     st.markdown("### Analyst Notes")
     analyst_notes = st.text_area("Add your observations, insights, or next steps")
 
-    # PDF Report Generator
     if st.button("📄 Generate PDF Report"):
         try:
             from dashboard.utils.report_generator import generate_report
-
             pdf_path = generate_report(
-                alerts=alerts_data,
+                alerts=st.session_state.alerts_data,
                 notes=analyst_notes,
                 analyst_name="Cyber Analyst",
                 logo_path=app.logo_path,
                 signature_path=app.signature_path
             )
-
             with open(pdf_path, "rb") as f:
                 st.download_button(
                     "⬇️ Download PDF Report",
@@ -235,12 +250,12 @@ elif page == "Reports":
         except Exception as e:
             st.error(f"Failed to generate PDF report: {e}")
 
-# --- Threat Detection ---
+# --- Threat Detection Page ---
 elif page == "Threat Detection":
     st.subheader("⚡ Threat Detection")
     st.info("Detection engine integration coming soon.")
 
-# --- Settings ---
+# --- Settings Page ---
 elif page == "Settings":
     st.subheader("⚙️ Settings")
     theme = st.selectbox("Theme", ["Light", "Dark", "System"])
