@@ -1,7 +1,6 @@
 import streamlit as st
 import sys
 import os
-from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
 from supabase import create_client, Client
@@ -27,7 +26,7 @@ load_dotenv()
 @st.cache_resource
 def init_supabase() -> Client:
     try:
-        if 'SUPABASE_URL' in st.secrets and 'SUPABASE_KEY' in st.secrets:
+        if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
             url: str = st.secrets["SUPABASE_URL"]
             key: str = st.secrets["SUPABASE_KEY"]
             return create_client(url, key)
@@ -42,7 +41,7 @@ supabase = init_supabase()
 @st.cache_resource
 def init_otx():
     try:
-        if 'OTX_API_KEY' in st.secrets:
+        if "OTX_API_KEY" in st.secrets:
             return OTXv2(st.secrets["OTX_API_KEY"])
         return None
     except Exception as e:
@@ -50,19 +49,6 @@ def init_otx():
         return None
 
 otx = init_otx()
-
-# --- Session Data ---
-if 'alerts_data' not in st.session_state:
-    st.session_state.alerts_data = [
-        {
-            "id": 1, "timestamp": datetime.now() - timedelta(hours=2),
-            "severity": "High", "type": "Malware Detection",
-            "source_ip": "192.168.1.100", "description": "Suspicious executable detected"
-        }
-    ]
-
-if 'threat_data' not in st.session_state:
-    st.session_state.threat_data = []
 
 # --- Main App ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
@@ -105,18 +91,57 @@ page = st.sidebar.radio(
 app = CyberThreatWatch()
 app.render_header()
 
+# --- Dashboard ---
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Total Alerts", len(st.session_state.alerts_data))
-    with col2:
-        fig = px.bar(
-            pd.DataFrame(st.session_state.alerts_data),
-            x="severity", title="Alerts by Severity"
-        )
-        st.plotly_chart(fig, width='stretch')  # FIXED: use_container_width=True → width='stretch'
 
+    alerts = []
+    if supabase:
+        try:
+            response = supabase.table("alerts").select("*").execute()
+            if response.data:
+                alerts = response.data
+        except Exception as e:
+            st.error(f"⚠️ Failed to fetch alerts: {e}")
+
+    total_alerts = len(alerts)
+    high_alerts = sum(1 for a in alerts if a.get("severity") == "High")
+    critical_alerts = sum(1 for a in alerts if a.get("severity") == "Critical")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Alerts", total_alerts)
+    with col2:
+        st.metric("High Alerts", high_alerts)
+    with col3:
+        st.metric("Critical Alerts", critical_alerts)
+
+    if alerts:
+        df = pd.DataFrame(alerts)
+
+        # Alerts by Severity
+        if "severity" in df.columns:
+            fig_severity = px.bar(
+                df,
+                x="severity",
+                title="Alerts by Severity",
+                text_auto=True
+            )
+            st.plotly_chart(fig_severity, width="stretch")
+
+        # Alerts over Time
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            fig_time = px.line(
+                df.groupby(df["timestamp"].dt.date).size().reset_index(name="count"),
+                x="timestamp", y="count", markers=True,
+                title="Alerts Over Time"
+            )
+            st.plotly_chart(fig_time, width="stretch")
+    else:
+        st.info("No alerts found in Supabase. Add some in the Alerts panel to see trends here!")
+
+# --- Search ---
 elif page == "Search":
     st.subheader("🔎 Threat Search")
     query = st.text_input("Enter IP, Domain, or Hash")
@@ -126,16 +151,25 @@ elif page == "Search":
             results = otx.search_pulses(query)
             st.json(results)
 
+# --- Alerts ---
 elif page == "Alerts":
-    app.alerts_panel.render(st.session_state.alerts_data)
+    app.alerts_panel.render([])
 
+# --- Reports ---
 elif page == "Reports":
     st.subheader("📝 Reports")
 
-    # Convert alerts to dataframe for CSV
-    df = pd.DataFrame(st.session_state.alerts_data)
+    alerts = []
+    if supabase:
+        try:
+            response = supabase.table("alerts").select("*").execute()
+            if response.data:
+                alerts = response.data
+        except Exception as e:
+            st.error(f"⚠️ Failed to fetch alerts: {e}")
 
-    # CSV download
+    df = pd.DataFrame(alerts)
+
     st.download_button(
         "⬇️ Download Alerts CSV",
         df.to_csv(index=False),
@@ -143,24 +177,19 @@ elif page == "Reports":
         mime="text/csv"
     )
 
-    # Analyst Notes
     st.markdown("### Analyst Notes")
     analyst_notes = st.text_area("Add your observations, insights, or next steps")
 
-    # PDF Report Generator
     if st.button("📄 Generate PDF Report"):
         try:
-            # Use absolute import for report generator
             from dashboard.utils.report_generator import generate_report
-
             pdf_path = generate_report(
-                alerts=st.session_state.alerts_data,
+                alerts=alerts,
                 notes=analyst_notes,
-                analyst_name="Cyber Analyst",  # You can make this dynamic later
+                analyst_name="Cyber Analyst",
                 logo_path=app.logo_path,
                 signature_path=app.signature_path
             )
-
             with open(pdf_path, "rb") as f:
                 st.download_button(
                     "⬇️ Download PDF Report",
@@ -171,10 +200,12 @@ elif page == "Reports":
         except Exception as e:
             st.error(f"Failed to generate PDF report: {e}")
 
+# --- Threat Detection ---
 elif page == "Threat Detection":
     st.subheader("⚡ Threat Detection")
     st.info("Detection engine integration coming soon.")
 
+# --- Settings ---
 elif page == "Settings":
     st.subheader("⚙️ Settings")
     theme = st.selectbox("Theme", ["Light", "Dark", "System"])
