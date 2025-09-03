@@ -16,8 +16,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
+from dashboard.components import auth  # ✅ fixed import for auth.py
 from dashboard.utils.otx_collector import collect_otx_alerts
-from dashboard.utils import auth  # 🔐 authentication module
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
