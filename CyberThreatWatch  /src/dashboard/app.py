@@ -33,6 +33,8 @@ def init_supabase() -> Client:
             url: str = st.secrets["SUPABASE_URL"]
             key: str = st.secrets["SUPABASE_KEY"]
             return create_client(url, key)
+        else:
+            st.error("❌ Missing Supabase credentials in secrets.toml")
         return None
     except Exception as e:
         logger.error(f"Supabase connection error: {e}")
@@ -44,30 +46,16 @@ supabase = init_supabase()
 @st.cache_resource
 def init_otx():
     try:
-        if 'OTX_API_KEY' in st.secrets:
+        if 'OTX_API_KEY' in st.secrets and st.secrets["OTX_API_KEY"]:
             return OTXv2(st.secrets["OTX_API_KEY"])
+        else:
+            st.warning("⚠️ OTX_API_KEY missing in secrets.toml")
         return None
     except Exception as e:
         logger.error(f"OTX init error: {e}")
         return None
 
 otx = init_otx()
-
-# --- Quick OTX Connectivity Test ---
-if otx:
-    try:
-        test_query = "ransomware"
-        test_results = otx.search_pulses(test_query)
-        if test_results and "results" in test_results:
-            st.sidebar.success(
-                f"✅ OTX API connected. Test query '{test_query}' returned {len(test_results['results'])} results."
-            )
-        else:
-            st.sidebar.warning("⚠️ OTX API connected, but no results returned.")
-    except Exception as e:
-        st.sidebar.error(f"❌ OTX test query failed: {e}")
-else:
-    st.sidebar.error("❌ OTX API not initialized. Check your OTX_API_KEY in secrets.toml")
 
 # --- Session Data ---
 if 'alerts_data' not in st.session_state:
@@ -125,8 +113,11 @@ if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
     if st.button("🔄 Fetch Latest Threats from OTX"):
-        collect_otx_alerts(otx, supabase)
-        st.success("Fetched latest OTX alerts!")
+        if otx and supabase:
+            collect_otx_alerts(otx, supabase)
+            st.success("✅ Fetched latest OTX alerts!")
+        else:
+            st.error("❌ OTX or Supabase not initialized. Please check your secrets.")
 
     if supabase:
         try:
@@ -203,7 +194,7 @@ if page == "Dashboard":
                         )
                         map_fig.update_layout(
                             mapbox_style="carto-positron",
-                            title="Global Attack Map"
+                            title="🌍 Global Attack Map"
                         )
                         st.plotly_chart(map_fig, use_container_width=True)
                     else:
@@ -226,6 +217,8 @@ elif page == "Search":
         if otx:
             results = otx.search_pulses(query)
             st.json(results)
+        else:
+            st.error("❌ OTX client not initialized")
 
 # --- Alerts Page ---
 elif page == "Alerts":
