@@ -40,16 +40,18 @@ class AlertsPanel:
         """Render alerts table and controls"""
         st.subheader("🚨 Active Alerts")
 
-        # --- Fetch Alerts from DB ---
+        # --- Always Fetch Fresh Alerts from Supabase ---
         db_alerts = self.fetch_supabase_alerts()
-        alerts_df = pd.DataFrame(db_alerts if db_alerts else alerts_data)
+        if db_alerts:
+            st.session_state.alerts_data = db_alerts  # keep session synced
+        alerts_df = pd.DataFrame(st.session_state.alerts_data)
 
         # --- Filter Controls ---
         st.markdown("#### 🔎 Filters")
         if not alerts_df.empty:
+            col1, col2 = st.columns(2)
             severity_filter, type_filter = None, None
 
-            col1, col2 = st.columns(2)
             with col1:
                 if "severity" in alerts_df.columns:
                     severity_filter = st.multiselect(
