@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from typing import List, Dict
 import logging
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -11,12 +10,11 @@ class AlertsPanel:
         self.supabase = supabase
         self.otx = otx
 
-    # --- Database Functions ---
     def fetch_supabase_alerts(self) -> List[Dict]:
         """Fetch alerts from Supabase if available"""
         try:
             if self.supabase:
-                response = self.supabase.table("alerts").select("*").order("timestamp", desc=True).execute()
+                response = self.supabase.table("alerts").select("*").execute()
                 if response.data:
                     return response.data
             return []
@@ -24,37 +22,20 @@ class AlertsPanel:
             logger.error(f"Supabase fetch error: {e}")
             return []
 
-    def insert_alert(self, alert: Dict):
-        """Insert a new alert into Supabase"""
+    def fetch_otx_iocs(self, query: str) -> List[Dict]:
+        """Search OTX for indicators of compromise"""
         try:
-            if self.supabase:
-                response = self.supabase.table("alerts").insert(alert).execute()
-                if response.data:
-                    return response.data
-            return None
+            if self.otx:
+                results = self.otx.search_pulses(query)
+                return [
+                    {"pulse_id": r["id"], "name": r["name"]}
+                    for r in results.get("results", [])
+                ]
+            return []
         except Exception as e:
-            logger.error(f"Supabase insert error: {e}")
-            return None
+            logger.error(f"OTX search error: {e}")
+            return []
 
-    def update_alert(self, alert_id: int, updates: Dict):
-        """Update an existing alert"""
-        try:
-            if self.supabase:
-                response = self.supabase.table("alerts").update(updates).eq("id", alert_id).execute()
-                return response.data
-        except Exception as e:
-            logger.error(f"Supabase update error: {e}")
-        return None
-
-    def delete_alert(self, alert_id: int):
-        """Delete an alert"""
-        try:
-            if self.supabase:
-                self.supabase.table("alerts").delete().eq("id", alert_id).execute()
-        except Exception as e:
-            logger.error(f"Supabase delete error: {e}")
-
-    # --- UI Functions ---
     def render(self, alerts_data: List[Dict]):
         """Render alerts table and controls"""
         st.subheader("🚨 Active Alerts")
@@ -65,64 +46,37 @@ class AlertsPanel:
 
         # --- Filter Controls ---
         st.markdown("#### 🔎 Filters")
-        col1, col2 = st.columns(2)
-        with col1:
-            severity_filter = st.multiselect("Severity", options=alerts_df["severity"].unique(), default=list(alerts_df["severity"].unique()))
-        with col2:
-            type_filter = st.multiselect("Type", options=alerts_df["type"].unique(), default=list(alerts_df["type"].unique()))
+        if not alerts_df.empty:
+            severity_filter, type_filter = None, None
 
-        filtered_df = alerts_df[
-            (alerts_df["severity"].isin(severity_filter)) &
-            (alerts_df["type"].isin(type_filter))
-        ]
-
-        # --- Display Alerts ---
-        st.dataframe(filtered_df, use_container_width=True)
-
-        # --- Add New Alert ---
-        with st.expander("➕ Add New Alert"):
             col1, col2 = st.columns(2)
             with col1:
-                severity = st.selectbox("Severity", ["Low", "Medium", "High", "Critical"])
-                alert_type = st.text_input("Type", "Suspicious Activity")
+                if "severity" in alerts_df.columns:
+                    severity_filter = st.multiselect(
+                        "Severity",
+                        options=alerts_df["severity"].unique(),
+                        default=list(alerts_df["severity"].unique())
+                    )
             with col2:
-                source_ip = st.text_input("Source IP", "192.168.1.1")
-                description = st.text_area("Description")
+                if "type" in alerts_df.columns:
+                    type_filter = st.multiselect(
+                        "Type",
+                        options=alerts_df["type"].unique(),
+                        default=list(alerts_df["type"].unique())
+                    )
 
-            if st.button("Add Alert"):
-                new_alert = {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "severity": severity,
-                    "type": alert_type,
-                    "source_ip": source_ip,
-                    "description": description,
-                    "status": "Open"
-                }
-                self.insert_alert(new_alert)
-                st.success("✅ Alert added!")
-                st.experimental_rerun()
+            # Apply filters safely
+            filtered_df = alerts_df.copy()
+            if severity_filter is not None:
+                filtered_df = filtered_df[filtered_df["severity"].isin(severity_filter)]
+            if type_filter is not None:
+                filtered_df = filtered_df[filtered_df["type"].isin(type_filter)]
+        else:
+            st.info("⚠️ No alerts available in Supabase yet.")
+            filtered_df = alerts_df
 
-        # --- Manage Alerts ---
-        st.markdown("#### 🛠 Manage Alerts")
-        for _, row in filtered_df.iterrows():
-            with st.expander(f"Alert #{row['id']} - {row['type']}"):
-                st.write(f"**Severity:** {row['severity']}")
-                st.write(f"**Source IP:** {row['source_ip']}")
-                st.write(f"**Description:** {row['description']}")
-                st.write(f"**Status:** {row.get('status', 'Open')}")
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if st.button(f"✅ Resolve {row['id']}", key=f"resolve_{row['id']}"):
-                        self.update_alert(row['id'], {"status": "Resolved"})
-                        st.experimental_rerun()
-                with col2:
-                    if st.button(f"📝 Tag {row['id']}", key=f"tag_{row['id']}"):
-                        tag = st.text_input("Enter Tag", key=f"tag_input_{row['id']}")
-                        if tag:
-                            self.update_alert(row['id'], {"tag": tag})
-                            st.experimental_rerun()
-                with col3:
-                    if st.button(f"❌ Delete {row['id']}", key=f"delete_{row['id']}"):
-                        self.delete_alert(row['id'])
-                        st.experimental_rerun()
+        # --- Display Alerts ---
+        if not filtered_df.empty:
+            st.dataframe(filtered_df, use_container_width=True)
+        else:
+            st.warning("No alerts match your filters.")
