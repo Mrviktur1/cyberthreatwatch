@@ -28,6 +28,7 @@ dash==2.9.3
 python-dateutil==2.8.2
 gunicorn==21.2.0
 Flask==2.3.3
+streamlit-autorefresh
 bcrypt==4.1.2
 setuptools
 wheel
