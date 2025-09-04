@@ -9,15 +9,15 @@ from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
-from streamlit_autorefresh import st_autorefresh  # auto-refresh
+from streamlit_autorefresh import st_autorefresh
 import urllib.parse
 
-# Add the parent directory to Python path to enable absolute imports
+# Add parent directory for absolute imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
-from dashboard.components import auth  # auth.py contains login/signup functions
+from dashboard.components import auth
 from dashboard.utils.otx_collector import collect_otx_alerts
 
 # Configure logging
@@ -28,19 +28,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # --- Supabase Client ---
-@st.cache_resource
-def init_supabase() -> Client:
-    try:
-        if 'SUPABASE_URL' in st.secrets and 'SUPABASE_KEY' in st.secrets:
-            url: str = st.secrets["SUPABASE_URL"]
-            key: str = st.secrets["SUPABASE_KEY"]
-            return create_client(url, key)
-        return None
-    except Exception as e:
-        logger.error(f"Supabase connection error: {e}")
-        return None
-
-supabase = init_supabase()
+supabase: Client = auth.init_supabase()
 st.session_state['supabase_client'] = supabase  # for auth.py usage
 
 # --- OTX Client ---
@@ -65,8 +53,6 @@ if 'threat_data' not in st.session_state:
 
 # --- Main App Config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
-
-# Auto-refresh every 60 seconds
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
 # --- CyberThreatWatch Class ---
@@ -200,10 +186,8 @@ if page == "Dashboard":
                         st.plotly_chart(map_fig, use_container_width=True)
                     else:
                         st.info("No GeoIP data available.")
-
             else:
                 st.info("✅ Connected to Supabase, but no alerts found.")
-
         except Exception as e:
             st.error(f"Error fetching data from Supabase: {e}")
     else:
