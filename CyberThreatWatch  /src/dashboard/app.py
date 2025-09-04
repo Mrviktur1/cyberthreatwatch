@@ -4,13 +4,12 @@ import os
 from datetime import datetime
 import pandas as pd
 import plotly.express as px
-from supabase import create_client, Client
+from supabase import Client
 from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
 from streamlit_autorefresh import st_autorefresh
-import urllib.parse
 
 # Add parent directory for absolute imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -28,18 +27,8 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # --- Supabase Client ---
-@st.cache_resource
-def init_supabase() -> Client:
-    try:
-        url: str = st.secrets["SUPABASE_URL"]
-        key: str = st.secrets["SUPABASE_KEY"]
-        return create_client(url, key)
-    except Exception as e:
-        logger.error(f"Supabase init error: {e}")
-        return None
-
-supabase: Client = init_supabase()
-st.session_state['supabase_client'] = supabase  # for auth.py usage
+supabase: Client = auth.supabase
+st.session_state['supabase_client'] = supabase
 
 # --- OTX Client ---
 @st.cache_resource
@@ -95,10 +84,12 @@ class CyberThreatWatch:
             st.markdown("Real-time Threat Intelligence Dashboard")
         st.markdown("---")
 
+
 # --- 🔐 Authentication Gate ---
 if not auth.is_authenticated():
     auth.show_auth_page()
     st.stop()
+
 
 # --- Navigation ---
 page = st.sidebar.radio(
