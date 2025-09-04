@@ -4,12 +4,13 @@ import os
 from datetime import datetime
 import pandas as pd
 import plotly.express as px
-from supabase import Client
+from supabase import create_client, Client
 from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
 from streamlit_autorefresh import st_autorefresh
+import urllib.parse
 
 # Add parent directory for absolute imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -27,7 +28,17 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # --- Supabase Client ---
-supabase: Client = auth.init_supabase()
+@st.cache_resource
+def init_supabase() -> Client:
+    try:
+        url: str = st.secrets["SUPABASE_URL"]
+        key: str = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception as e:
+        logger.error(f"Supabase init error: {e}")
+        return None
+
+supabase: Client = init_supabase()
 st.session_state['supabase_client'] = supabase  # for auth.py usage
 
 # --- OTX Client ---
@@ -53,7 +64,6 @@ if 'threat_data' not in st.session_state:
 # --- Main App Config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
-
 
 # --- CyberThreatWatch Class ---
 class CyberThreatWatch:
@@ -85,12 +95,10 @@ class CyberThreatWatch:
             st.markdown("Real-time Threat Intelligence Dashboard")
         st.markdown("---")
 
-
 # --- 🔐 Authentication Gate ---
 if not auth.is_authenticated():
     auth.show_auth_page()
     st.stop()
-
 
 # --- Navigation ---
 page = st.sidebar.radio(
@@ -100,7 +108,6 @@ page = st.sidebar.radio(
 
 app = CyberThreatWatch()
 app.render_header()
-
 
 # --- Dashboard Page ---
 if page == "Dashboard":
@@ -194,7 +201,6 @@ if page == "Dashboard":
     else:
         st.warning("⚠️ Supabase not connected. Please check your credentials.")
 
-
 # --- Search Page ---
 elif page == "Search":
     st.subheader("🔎 Threat Search")
@@ -205,11 +211,9 @@ elif page == "Search":
             results = otx.search_pulses(query)
             st.json(results)
 
-
 # --- Alerts Page ---
 elif page == "Alerts":
     app.alerts_panel.render(st.session_state.alerts_data)
-
 
 # --- Reports Page ---
 elif page == "Reports":
@@ -244,12 +248,10 @@ elif page == "Reports":
         except Exception as e:
             st.error(f"Failed to generate PDF report: {e}")
 
-
 # --- Threat Detection Page ---
 elif page == "Threat Detection":
     st.subheader("⚡ Threat Detection")
     st.info("Detection engine integration coming soon.")
-
 
 # --- Settings Page ---
 elif page == "Settings":
