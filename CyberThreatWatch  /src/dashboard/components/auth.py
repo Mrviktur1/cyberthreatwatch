@@ -1,29 +1,24 @@
 import streamlit as st
 from supabase import create_client, Client
-import logging
+import os
 
-logger = logging.getLogger(__name__)
-
-# ---------------- SUPABASE CLIENT ---------------- #
+# ---------------- Supabase Client ---------------- #
 @st.cache_resource
 def init_supabase() -> Client:
-    """Initialize Supabase client."""
+    """Initialize Supabase client"""
     try:
         url: str = st.secrets["SUPABASE_URL"]
         key: str = st.secrets["SUPABASE_KEY"]
         return create_client(url, key)
     except Exception as e:
-        logger.error(f"Supabase init error: {e}")
-        st.error("⚠️ Could not initialize Supabase client.")
+        st.error(f"Supabase init error: {e}")
         return None
 
 supabase = init_supabase()
-st.session_state['supabase_client'] = supabase  # Make available globally
+st.session_state["supabase_client"] = supabase
 
-# ---------------- AUTH FUNCTIONS ---------------- #
-
+# ---------------- Auth Functions ---------------- #
 def signup(email: str, password: str):
-    """Sign up with email/password."""
     try:
         res = supabase.auth.sign_up({"email": email, "password": password})
         if res.user:
@@ -32,11 +27,10 @@ def signup(email: str, password: str):
         st.error("❌ Signup failed.")
         return False
     except Exception as e:
-        st.error(f"Signup error: {e}")
+        st.error(f"Error: {e}")
         return False
 
 def login(email: str, password: str):
-    """Login with email/password."""
     try:
         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
         if res.user:
@@ -46,49 +40,52 @@ def login(email: str, password: str):
         st.error("❌ Invalid credentials")
         return False
     except Exception as e:
-        st.error(f"Login error: {e}")
+        st.error(f"Error: {e}")
         return False
 
 def login_with_google():
-    """Start OAuth login with Google."""
+    """Initiate Google OAuth login"""
     try:
         redirect_url = st.secrets.get("SITE_URL", "http://localhost:8501")
         res = supabase.auth.sign_in_with_oauth(
             provider="google",
-            options={"redirect_to": redirect_url}
+            redirect_to=redirect_url
         )
-        if res and res.url:
-            # Provide clickable link to redirect to Google login
-            st.markdown(
-                f'<a href="{res.url}" target="_self">'
-                '🔗 Click here to sign in with Google</a>',
-                unsafe_allow_html=True
-            )
+        if res and hasattr(res, "url") and res.url:
+            # Auto-redirect to Google sign-in
+            st.experimental_set_query_params()
+            st.markdown(f'<meta http-equiv="refresh" content="0; url={res.url}">', unsafe_allow_html=True)
+            return True
+        st.error("❌ Could not initiate Google login.")
+        return False
     except Exception as e:
         st.error(f"Google login failed: {e}")
+        return False
 
 def handle_oauth_callback():
-    """Handle OAuth callback and store session."""
+    """Handle OAuth callback and store session"""
     try:
         session = supabase.auth.get_session()
         if session and session.user:
             st.session_state["user"] = session.user
+            st.success(f"✅ Welcome {session.user.email}")
+            st.experimental_set_query_params()  # Clear URL params
+            st.experimental_rerun()
     except Exception as e:
         st.error(f"OAuth callback error: {e}")
 
 def logout():
-    """Log out current user."""
     try:
         supabase.auth.sign_out()
         st.session_state.pop("user", None)
         st.success("👋 Logged out successfully!")
         return True
     except Exception as e:
-        st.error(f"Logout error: {e}")
+        st.error(f"Error: {e}")
         return False
 
 def is_authenticated():
-    """Check if user is logged in."""
+    """Check if user is logged in"""
     if "user" in st.session_state:
         return True
     try:
@@ -105,8 +102,7 @@ def get_current_user():
         return st.session_state["user"]
     return None
 
-# ---------------- UI COMPONENTS ---------------- #
-
+# ---------------- UI Components ---------------- #
 def show_login_form():
     with st.form("login_form"):
         st.subheader("Login")
@@ -124,7 +120,8 @@ def show_login_form():
 
     st.write("---")
     st.write("Or login with:")
-    login_with_google()
+    if st.button("🔗 Google Login"):
+        login_with_google()
 
 def show_signup_form():
     with st.form("signup_form"):
@@ -145,7 +142,6 @@ def show_signup_form():
                 st.error("Please fill all fields")
 
 def show_auth_page():
-    """Display login/signup page and handle OAuth callback."""
     st.title("🔐 User Authentication")
     handle_oauth_callback()
 
