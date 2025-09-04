@@ -1,7 +1,7 @@
 import streamlit as st
 import sys
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 import plotly.express as px
 from supabase import create_client, Client
@@ -10,13 +10,14 @@ from dotenv import load_dotenv
 import logging
 from PIL import Image
 from streamlit_autorefresh import st_autorefresh  # auto-refresh
+import urllib.parse
 
 # Add the parent directory to Python path to enable absolute imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
-from dashboard.components import auth  # ✅ fixed import for auth.py
+from dashboard.components import auth  # auth.py contains login/signup functions
 from dashboard.utils.otx_collector import collect_otx_alerts
 
 # Configure logging
@@ -40,6 +41,7 @@ def init_supabase() -> Client:
         return None
 
 supabase = init_supabase()
+st.session_state['supabase_client'] = supabase  # for auth.py usage
 
 # --- OTX Client ---
 @st.cache_resource
@@ -67,6 +69,7 @@ st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡
 # Auto-refresh every 60 seconds
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
+# --- CyberThreatWatch Class ---
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
@@ -129,10 +132,7 @@ if page == "Dashboard":
                 # Alerts Over Time
                 if "timestamp" in df.columns:
                     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-                    time_fig = px.histogram(
-                        df, x="timestamp",
-                        title="Alerts Over Time"
-                    )
+                    time_fig = px.histogram(df, x="timestamp", title="Alerts Over Time")
                     st.plotly_chart(time_fig, use_container_width=True)
 
                 # Alerts by Severity
@@ -226,7 +226,6 @@ elif page == "Alerts":
 # --- Reports Page ---
 elif page == "Reports":
     st.subheader("📝 Reports")
-
     df = pd.DataFrame(st.session_state.alerts_data)
     st.download_button(
         "⬇️ Download Alerts CSV",
@@ -237,7 +236,6 @@ elif page == "Reports":
 
     st.markdown("### Analyst Notes")
     analyst_notes = st.text_area("Add your observations, insights, or next steps")
-
     if st.button("📄 Generate PDF Report"):
         try:
             from dashboard.utils.report_generator import generate_report
