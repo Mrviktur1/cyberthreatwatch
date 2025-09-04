@@ -1,8 +1,9 @@
 import streamlit as st
 from supabase import create_client, Client
 from PIL import Image
+import os  # <-- Added for file/path checks
 
-# ---------------- INIT SUPABASE ---------------- #
+# ✅ Initialize Supabase client
 @st.cache_resource
 def init_supabase() -> Client:
     url: str = st.secrets["SUPABASE_URL"]
@@ -47,7 +48,7 @@ def login_with_google():
             "options": {"redirect_to": redirect_url}
         })
         if res and res.url:
-            # Auto redirect
+            # Automatically redirect
             st.experimental_set_query_params()
             st.markdown(f'<meta http-equiv="refresh" content="0; url={res.url}">', unsafe_allow_html=True)
             return True
@@ -99,6 +100,8 @@ def get_current_user():
 # ---------------- UI COMPONENTS ---------------- #
 
 def show_login_form():
+    google_logo_path = "assets/google_logo.png"  # <-- Path to your Google logo
+
     with st.form("login_form"):
         st.subheader("Login")
         email = st.text_input("Email")
@@ -115,15 +118,17 @@ def show_login_form():
 
     st.write("---")
     st.write("Or login with:")
-    col1, col2 = st.columns([1, 5])
-    with col1:
+
+    # Show Google login button with logo
+    if google_logo_path and os.path.exists(google_logo_path):
+        logo = Image.open(google_logo_path)
+        if st.button(" Login with Google"):
+            login_with_google()
+        st.image(logo, width=25)
+    else:
         if st.button("🔗 Google Login"):
             login_with_google()
-    with col2:
-        google_logo_path = "assets/google_logo.png"
-        if google_logo_path and os.path.exists(google_logo_path):
-            logo = Image.open(google_logo_path)
-            st.image(logo, width=40)
+
 
 def show_signup_form():
     with st.form("signup_form"):
