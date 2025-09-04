@@ -1,22 +1,23 @@
 import streamlit as st
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
+from supabase import create_client, Client
 from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
-from streamlit_autorefresh import st_autorefresh
+from streamlit_autorefresh import st_autorefresh  # auto-refresh
 
-# Add parent directory for absolute imports
+# Add the parent directory to Python path to enable absolute imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
-from dashboard.components import auth
 from dashboard.utils.otx_collector import collect_otx_alerts
+from dashboard.utils import auth  # 🔐 authentication module
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,8 +27,19 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # --- Supabase Client ---
-supabase = auth.init_supabase()
-st.session_state['supabase_client'] = supabase
+@st.cache_resource
+def init_supabase() -> Client:
+    try:
+        if 'SUPABASE_URL' in st.secrets and 'SUPABASE_KEY' in st.secrets:
+            url: str = st.secrets["SUPABASE_URL"]
+            key: str = st.secrets["SUPABASE_KEY"]
+            return create_client(url, key)
+        return None
+    except Exception as e:
+        logger.error(f"Supabase connection error: {e}")
+        return None
+
+supabase = init_supabase()
 
 # --- OTX Client ---
 @st.cache_resource
@@ -45,14 +57,16 @@ otx = init_otx()
 # --- Session Data ---
 if 'alerts_data' not in st.session_state:
     st.session_state.alerts_data = []
+
 if 'threat_data' not in st.session_state:
     st.session_state.threat_data = []
 
 # --- Main App Config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
+
+# Auto-refresh every 60 seconds
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
-# --- CyberThreatWatch Class ---
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
@@ -82,10 +96,12 @@ class CyberThreatWatch:
             st.markdown("Real-time Threat Intelligence Dashboard")
         st.markdown("---")
 
+
 # --- 🔐 Authentication Gate ---
 if not auth.is_authenticated():
     auth.show_auth_page()
     st.stop()
+
 
 # --- Navigation ---
 page = st.sidebar.radio(
@@ -99,6 +115,7 @@ app.render_header()
 # --- Dashboard Page ---
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
+
     if st.button("🔄 Fetch Latest Threats from OTX"):
         collect_otx_alerts(otx, supabase)
         st.success("Fetched latest OTX alerts!")
@@ -111,22 +128,22 @@ if page == "Dashboard":
 
                 # Alerts Over Time
                 if "timestamp" in df.columns:
-                    st.plotly_chart(
-                        px.histogram(df, x="timestamp", title="Alerts Over Time"),
-                        use_container_width=True
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+                    time_fig = px.histogram(
+                        df, x="timestamp",
+                        title="Alerts Over Time"
                     )
+                    st.plotly_chart(time_fig, use_container_width=True)
 
                 # Alerts by Severity
                 if "severity" in df.columns:
-                    st.plotly_chart(
-                        px.bar(
-                            df["severity"].value_counts().reset_index(),
-                            x="index", y="severity",
-                            title="Alerts by Severity",
-                            labels={"index": "Severity", "severity": "Count"}
-                        ),
-                        use_container_width=True
+                    severity_fig = px.bar(
+                        df["severity"].value_counts().reset_index(),
+                        x="index", y="severity",
+                        title="Alerts by Severity",
+                        labels={"index": "Severity", "severity": "Count"}
                     )
+                    st.plotly_chart(severity_fig, use_container_width=True)
 
                 # Top Source IPs
                 if "source_ip" in df.columns:
@@ -135,10 +152,13 @@ if page == "Dashboard":
                         .rename(columns={"index": "source_ip", "source_ip": "count"})
                         .head(10)
                     )
-                    st.plotly_chart(
-                        px.bar(top_ips, x="source_ip", y="count", title="Top 10 Source IPs"),
-                        use_container_width=True
+                    ip_fig = px.bar(
+                        top_ips,
+                        x="source_ip", y="count",
+                        title="Top 10 Source IPs",
+                        labels={"source_ip": "Source IP", "count": "Alert Count"},
                     )
+                    st.plotly_chart(ip_fig, use_container_width=True)
 
                 # Top Threat Types
                 if "type" in df.columns:
@@ -147,28 +167,43 @@ if page == "Dashboard":
                         .rename(columns={"index": "type", "type": "count"})
                         .head(10)
                     )
-                    st.plotly_chart(
-                        px.pie(top_types, names="type", values="count", title="Top Threat Types"),
-                        use_container_width=True
+                    type_fig = px.pie(
+                        top_types,
+                        names="type", values="count",
+                        title="Top Threat Types"
                     )
+                    st.plotly_chart(type_fig, use_container_width=True)
 
                 # GeoIP World Map
                 if "source_ip" in df.columns:
                     from dashboard.utils.geoip_helper import ip_to_location
-                    geo_data = [ip_to_location(ip) for ip in df["source_ip"].dropna().unique() if ip_to_location(ip)]
+
+                    geo_data = []
+                    for ip in df["source_ip"].dropna().unique():
+                        loc = ip_to_location(ip)
+                        if loc:
+                            geo_data.append(loc)
+
                     if geo_data:
                         geo_df = pd.DataFrame(geo_data)
                         map_fig = px.scatter_mapbox(
-                            geo_df, lat="lat", lon="lon",
-                            hover_name="ip", hover_data=["country"],
+                            geo_df,
+                            lat="lat", lon="lon",
+                            hover_name="ip",
+                            hover_data=["country"],
                             zoom=1, height=500
                         )
-                        map_fig.update_layout(mapbox_style="carto-positron", title="Global Attack Map")
+                        map_fig.update_layout(
+                            mapbox_style="carto-positron",
+                            title="Global Attack Map"
+                        )
                         st.plotly_chart(map_fig, use_container_width=True)
                     else:
                         st.info("No GeoIP data available.")
+
             else:
                 st.info("✅ Connected to Supabase, but no alerts found.")
+
         except Exception as e:
             st.error(f"Error fetching data from Supabase: {e}")
     else:
@@ -178,9 +213,11 @@ if page == "Dashboard":
 elif page == "Search":
     st.subheader("🔎 Threat Search")
     query = st.text_input("Enter IP, Domain, or Hash")
-    if st.button("Search") and otx:
-        results = otx.search_pulses(query)
-        st.json(results)
+    if st.button("Search"):
+        st.write(f"Searching threat intelligence for: {query}")
+        if otx:
+            results = otx.search_pulses(query)
+            st.json(results)
 
 # --- Alerts Page ---
 elif page == "Alerts":
@@ -189,11 +226,18 @@ elif page == "Alerts":
 # --- Reports Page ---
 elif page == "Reports":
     st.subheader("📝 Reports")
+
     df = pd.DataFrame(st.session_state.alerts_data)
-    st.download_button("⬇️ Download Alerts CSV", df.to_csv(index=False), file_name="alerts.csv", mime="text/csv")
+    st.download_button(
+        "⬇️ Download Alerts CSV",
+        df.to_csv(index=False),
+        file_name="alerts.csv",
+        mime="text/csv"
+    )
 
     st.markdown("### Analyst Notes")
     analyst_notes = st.text_area("Add your observations, insights, or next steps")
+
     if st.button("📄 Generate PDF Report"):
         try:
             from dashboard.utils.report_generator import generate_report
@@ -205,7 +249,12 @@ elif page == "Reports":
                 signature_path=app.signature_path
             )
             with open(pdf_path, "rb") as f:
-                st.download_button("⬇️ Download PDF Report", f, file_name="threat_report.pdf", mime="application/pdf")
+                st.download_button(
+                    "⬇️ Download PDF Report",
+                    f,
+                    file_name="threat_report.pdf",
+                    mime="application/pdf"
+                )
         except Exception as e:
             st.error(f"Failed to generate PDF report: {e}")
 
