@@ -1,9 +1,25 @@
 import streamlit as st
 import os
-from supabase import Client
+from supabase import create_client, Client
+from PIL import Image
+import logging
 
-# Use supabase client from session_state
-supabase: Client = st.session_state.get("supabase_client")
+logger = logging.getLogger(__name__)
+
+# ---------------- SUPABASE ---------------- #
+@st.cache_resource
+def init_supabase() -> Client:
+    """Initialize Supabase client"""
+    try:
+        url: str = st.secrets["SUPABASE_URL"]
+        key: str = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception as e:
+        logger.error(f"Supabase init error: {e}")
+        return None
+
+supabase: Client = init_supabase()
+st.session_state['supabase_client'] = supabase  # make accessible in app.py
 
 # ---------------- AUTH FUNCTIONS ---------------- #
 
@@ -33,7 +49,7 @@ def login(email: str, password: str):
         return False
 
 def login_with_google():
-    """Return the OAuth URL for Google login"""
+    """Initiate Google OAuth login and redirect automatically"""
     try:
         redirect_url = st.secrets.get("SITE_URL", "http://localhost:8501")
         res = supabase.auth.sign_in_with_oauth({
@@ -41,12 +57,13 @@ def login_with_google():
             "options": {"redirect_to": redirect_url}
         })
         if res and res.url:
-            return res.url
-        st.error("❌ Could not initiate Google login.")
-        return None
+            # Redirect to the OAuth URL
+            st.markdown(f'<meta http-equiv="refresh" content="0; url={res.url}">', unsafe_allow_html=True)
+            st.stop()
+        else:
+            st.error("❌ Could not initiate Google login.")
     except Exception as e:
         st.error(f"Google login failed: {e}")
-        return None
 
 def handle_oauth_callback():
     """Handle OAuth callback from Supabase"""
@@ -54,9 +71,8 @@ def handle_oauth_callback():
         session = supabase.auth.get_session()
         if session and session.user:
             st.session_state["user"] = session.user
-            st.success(f"✅ Welcome {session.user.email}")
             st.experimental_set_query_params()  # clear URL params
-            st.rerun()
+            st.experimental_rerun()
     except Exception as e:
         st.error(f"OAuth callback error: {e}")
 
@@ -65,12 +81,12 @@ def logout():
         supabase.auth.sign_out()
         st.session_state.pop("user", None)
         st.success("👋 Logged out successfully!")
-        return True
+        st.experimental_rerun()
     except Exception as e:
         st.error(f"Error: {e}")
-        return False
 
 def is_authenticated():
+    """Check if user is authenticated"""
     if "user" in st.session_state:
         return True
     try:
@@ -90,6 +106,7 @@ def get_current_user():
 # ---------------- UI COMPONENTS ---------------- #
 
 def show_login_form():
+    google_logo_path = "assets/google_logo.png"
     with st.form("login_form"):
         st.subheader("Login")
         email = st.text_input("Email")
@@ -98,24 +115,20 @@ def show_login_form():
 
         if submit and email and password:
             if login(email, password):
-                st.rerun()
-            else:
-                st.error("Invalid credentials")
+                st.experimental_rerun()
         elif submit:
             st.error("Please enter email and password")
 
     st.write("---")
     st.write("Or login with:")
-
-    google_url = login_with_google()
-    if google_url:
-        # Display clickable link with Google logo
-        st.markdown(
-            f'<a href="{google_url}" target="_self" style="display:flex; align-items:center;">'
-            f'<img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" '
-            f'style="height:20px; margin-right:8px;">Login with Google</a>',
-            unsafe_allow_html=True
-        )
+    if os.path.exists(google_logo_path):
+        google_logo = Image.open(google_logo_path)
+        if st.button("Login with Google"):
+            login_with_google()
+        st.image(google_logo, width=30)
+    else:
+        if st.button("Login with Google"):
+            login_with_google()
 
 def show_signup_form():
     with st.form("signup_form"):
@@ -129,7 +142,7 @@ def show_signup_form():
             if email and password and confirm_password:
                 if password == confirm_password:
                     if signup(email, password):
-                        st.rerun()
+                        st.experimental_rerun()
                 else:
                     st.error("Passwords do not match")
             else:
@@ -137,14 +150,13 @@ def show_signup_form():
 
 def show_auth_page():
     st.title("🔐 User Authentication")
-    handle_oauth_callback()
+    handle_oauth_callback()  # handle callback if redirected from Google
 
     if is_authenticated():
         user = get_current_user()
         st.success(f"✅ Welcome, {user.email}!")
         if st.button("Logout"):
             logout()
-            st.rerun()
         return
 
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
