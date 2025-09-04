@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# --- Supabase Client from auth.py ---
+# --- Supabase Client ---
 supabase = auth.init_supabase()
-st.session_state['supabase_client'] = supabase  # for auth.py usage
+st.session_state['supabase_client'] = supabase
 
 # --- OTX Client ---
 @st.cache_resource
@@ -111,8 +111,10 @@ if page == "Dashboard":
 
                 # Alerts Over Time
                 if "timestamp" in df.columns:
-                    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-                    st.plotly_chart(px.histogram(df, x="timestamp", title="Alerts Over Time"), use_container_width=True)
+                    st.plotly_chart(
+                        px.histogram(df, x="timestamp", title="Alerts Over Time"),
+                        use_container_width=True
+                    )
 
                 # Alerts by Severity
                 if "severity" in df.columns:
@@ -145,7 +147,10 @@ if page == "Dashboard":
                         .rename(columns={"index": "type", "type": "count"})
                         .head(10)
                     )
-                    st.plotly_chart(px.pie(top_types, names="type", values="count", title="Top Threat Types"), use_container_width=True)
+                    st.plotly_chart(
+                        px.pie(top_types, names="type", values="count", title="Top Threat Types"),
+                        use_container_width=True
+                    )
 
                 # GeoIP World Map
                 if "source_ip" in df.columns:
@@ -154,7 +159,9 @@ if page == "Dashboard":
                     if geo_data:
                         geo_df = pd.DataFrame(geo_data)
                         map_fig = px.scatter_mapbox(
-                            geo_df, lat="lat", lon="lon", hover_name="ip", hover_data=["country"], zoom=1, height=500
+                            geo_df, lat="lat", lon="lon",
+                            hover_name="ip", hover_data=["country"],
+                            zoom=1, height=500
                         )
                         map_fig.update_layout(mapbox_style="carto-positron", title="Global Attack Map")
                         st.plotly_chart(map_fig, use_container_width=True)
