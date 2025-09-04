@@ -4,13 +4,12 @@ import os
 from datetime import datetime
 import pandas as pd
 import plotly.express as px
-from supabase import create_client, Client
+from supabase import Client
 from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
 from streamlit_autorefresh import st_autorefresh
-import urllib.parse
 
 # Add parent directory for absolute imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -54,6 +53,7 @@ if 'threat_data' not in st.session_state:
 # --- Main App Config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
+
 
 # --- CyberThreatWatch Class ---
 class CyberThreatWatch:
@@ -100,6 +100,7 @@ page = st.sidebar.radio(
 
 app = CyberThreatWatch()
 app.render_header()
+
 
 # --- Dashboard Page ---
 if page == "Dashboard":
@@ -193,6 +194,7 @@ if page == "Dashboard":
     else:
         st.warning("⚠️ Supabase not connected. Please check your credentials.")
 
+
 # --- Search Page ---
 elif page == "Search":
     st.subheader("🔎 Threat Search")
@@ -203,9 +205,11 @@ elif page == "Search":
             results = otx.search_pulses(query)
             st.json(results)
 
+
 # --- Alerts Page ---
 elif page == "Alerts":
     app.alerts_panel.render(st.session_state.alerts_data)
+
 
 # --- Reports Page ---
 elif page == "Reports":
@@ -240,10 +244,12 @@ elif page == "Reports":
         except Exception as e:
             st.error(f"Failed to generate PDF report: {e}")
 
+
 # --- Threat Detection Page ---
 elif page == "Threat Detection":
     st.subheader("⚡ Threat Detection")
     st.info("Detection engine integration coming soon.")
+
 
 # --- Settings Page ---
 elif page == "Settings":
