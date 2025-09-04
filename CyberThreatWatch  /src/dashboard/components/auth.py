@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
+import os
 from PIL import Image
-import os  # <-- Added for file/path checks
 
 # ✅ Initialize Supabase client
 @st.cache_resource
@@ -15,6 +15,7 @@ supabase = init_supabase()
 # ---------------- AUTH FUNCTIONS ---------------- #
 
 def signup(email: str, password: str):
+    """Sign up new user"""
     try:
         res = supabase.auth.sign_up({"email": email, "password": password})
         if res.user:
@@ -27,6 +28,7 @@ def signup(email: str, password: str):
         return False
 
 def login(email: str, password: str):
+    """Login existing user"""
     try:
         res = supabase.auth.sign_in_with_password({"email": email, "password": password})
         if res.user:
@@ -40,17 +42,15 @@ def login(email: str, password: str):
         return False
 
 def login_with_google():
-    """Initiate OAuth login and redirect automatically"""
+    """Login with Google (OAuth)"""
     try:
-        redirect_url = st.secrets.get("SITE_URL", "http://localhost:8501")
+        redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")  # your app URL
         res = supabase.auth.sign_in_with_oauth({
             "provider": "google",
-            "options": {"redirect_to": redirect_url}
+            "options": {"redirect_to": redirect_to}
         })
         if res and res.url:
-            # Automatically redirect
-            st.experimental_set_query_params()
-            st.markdown(f'<meta http-equiv="refresh" content="0; url={res.url}">', unsafe_allow_html=True)
+            st.session_state["oauth_url"] = res.url
             return True
         st.error("❌ Could not initiate Google login.")
         return False
@@ -71,6 +71,7 @@ def handle_oauth_callback():
         st.error(f"OAuth callback error: {e}")
 
 def logout():
+    """Logout user"""
     try:
         supabase.auth.sign_out()
         st.session_state.pop("user", None)
@@ -81,6 +82,7 @@ def logout():
         return False
 
 def is_authenticated():
+    """Check if user is authenticated"""
     if "user" in st.session_state:
         return True
     try:
@@ -100,8 +102,7 @@ def get_current_user():
 # ---------------- UI COMPONENTS ---------------- #
 
 def show_login_form():
-    google_logo_path = "assets/google_logo.png"  # <-- Path to your Google logo
-
+    """Display login form"""
     with st.form("login_form"):
         st.subheader("Login")
         email = st.text_input("Email")
@@ -119,18 +120,29 @@ def show_login_form():
     st.write("---")
     st.write("Or login with:")
 
-    # Show Google login button with logo
+    google_logo_path = "assets/google_logo.png"
     if google_logo_path and os.path.exists(google_logo_path):
-        logo = Image.open(google_logo_path)
-        if st.button(" Login with Google"):
-            login_with_google()
-        st.image(logo, width=25)
+        google_logo = Image.open(google_logo_path)
+        if st.button("Continue with Google"):
+            if login_with_google() and "oauth_url" in st.session_state:
+                st.markdown(
+                    f'<a href="{st.session_state["oauth_url"]}" target="_self">'
+                    f'<img src="data:image/png;base64,{_image_to_base64(google_logo)}" width="24"> Continue with Google</a>',
+                    unsafe_allow_html=True
+                )
     else:
-        if st.button("🔗 Google Login"):
+        if st.button("Continue with Google"):
             login_with_google()
 
+def _image_to_base64(image: Image.Image) -> str:
+    """Convert PIL image to base64 string for inline display"""
+    import io, base64
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
 
 def show_signup_form():
+    """Display signup form"""
     with st.form("signup_form"):
         st.subheader("Sign Up")
         email = st.text_input("Email", key="signup_email")
@@ -149,6 +161,7 @@ def show_signup_form():
                 st.error("Please fill all fields")
 
 def show_auth_page():
+    """Main authentication page"""
     st.title("🔐 User Authentication")
     handle_oauth_callback()
 
