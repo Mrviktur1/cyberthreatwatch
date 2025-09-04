@@ -1,6 +1,5 @@
 import streamlit as st
 from supabase import create_client, Client
-import urllib.parse
 
 # ✅ Initialize Supabase client once
 @st.cache_resource
@@ -14,7 +13,6 @@ supabase = init_supabase()
 # ---------------- AUTH FUNCTIONS ---------------- #
 
 def signup(email: str, password: str):
-    """Sign up new user"""
     try:
         response = supabase.auth.sign_up({"email": email, "password": password})
         if response.user:
@@ -28,7 +26,6 @@ def signup(email: str, password: str):
 
 
 def login(email: str, password: str):
-    """Login existing user"""
     try:
         response = supabase.auth.sign_in_with_password({"email": email, "password": password})
         if response.user:
@@ -43,16 +40,10 @@ def login(email: str, password: str):
 
 
 def login_with_google():
-    """Login with Google (OAuth)"""
+    """Open Google OAuth URL in a new tab."""
     try:
         redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")
-        encoded_redirect = urllib.parse.quote(redirect_to)
-
-        res = supabase.auth.sign_in_with_oauth({
-            "provider": "google",
-            "options": {"redirect_to": encoded_redirect}
-        })
-
+        res = supabase.auth.get_authorization_url(provider="google", redirect_to=redirect_to)
         if res and res.url:
             st.session_state["oauth_url"] = res.url
             return True
@@ -63,19 +54,7 @@ def login_with_google():
         return False
 
 
-def reset_password(email: str):
-    """Trigger Supabase password reset"""
-    try:
-        supabase.auth.reset_password_for_email(email)
-        st.success("📧 Password reset email sent. Check your inbox.")
-        return True
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
-
-
 def logout():
-    """Logout user"""
     try:
         supabase.auth.sign_out()
         st.session_state.pop("user", None)
@@ -89,24 +68,19 @@ def logout():
 def handle_oauth_callback():
     """Handle OAuth callback after redirect"""
     try:
-        query_params = st.query_params  # ✅ New API (replaces experimental_get_query_params)
-
-        if "code" in query_params or "error" in query_params:
-            session = supabase.auth.get_session_from_url(str(st.query_params))
-            if session and session.user:
-                st.session_state["user"] = session.user
-                st.success(f"✅ Welcome {session.user.email}")
-                st.query_params.clear()
-                st.rerun()
+        session = supabase.auth.get_session()
+        if session and session.user:
+            st.session_state["user"] = session.user
+            st.success(f"✅ Welcome {session.user.email}")
+            st.experimental_set_query_params()  # clear URL params
+            st.experimental_rerun()
     except Exception as e:
         st.error(f"OAuth callback error: {e}")
 
 
 def is_authenticated():
-    """Check if user is authenticated"""
     if "user" in st.session_state:
         return True
-
     try:
         session = supabase.auth.get_session()
         if session and session.user:
@@ -114,24 +88,22 @@ def is_authenticated():
             return True
     except Exception:
         pass
-
     return False
 
 
 def get_current_user():
-    """Get current user if authenticated"""
     if is_authenticated():
         return st.session_state["user"]
     return None
 
-# ---------------- UI COMPONENTS ---------------- #
+
+# ---------------- UI ---------------- #
 
 def show_login_form():
-    """Display login form"""
     with st.form("login_form"):
-        st.subheader("Login to Your Account")
-        email = st.text_input("Email", placeholder="Enter your email")
-        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        st.subheader("Login")
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
         submit = st.form_submit_button("Login")
 
         if submit:
@@ -147,23 +119,13 @@ def show_login_form():
         if login_with_google() and "oauth_url" in st.session_state:
             st.markdown(f"[👉 Continue with Google]({st.session_state.oauth_url})")
 
-    st.write("---")
-    with st.expander("Forgot Password?"):
-        reset_email = st.text_input("Email for password reset", key="reset_email")
-        if st.button("Send Reset Link"):
-            if reset_email:
-                reset_password(reset_email)
-            else:
-                st.error("Please enter your email")
-
 
 def show_signup_form():
-    """Display signup form"""
     with st.form("signup_form"):
-        st.subheader("Create New Account")
-        email = st.text_input("Email", placeholder="Enter your email", key="signup_email")
-        password = st.text_input("Password", type="password", placeholder="Create a password", key="signup_password")
-        confirm_password = st.text_input("Confirm Password", type="password", placeholder="Confirm your password", key="confirm_password")
+        st.subheader("Sign Up")
+        email = st.text_input("Email", key="signup_email")
+        password = st.text_input("Password", type="password", key="signup_password")
+        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
         submit = st.form_submit_button("Sign Up")
 
         if submit:
@@ -178,11 +140,8 @@ def show_signup_form():
 
 
 def show_auth_page():
-    """Main authentication page"""
     st.title("🔐 User Authentication")
-
     handle_oauth_callback()
-
     if is_authenticated():
         user = get_current_user()
         st.success(f"✅ Welcome, {user.email}!")
@@ -190,22 +149,8 @@ def show_auth_page():
             logout()
             st.rerun()
         return
-
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
     with tab1:
         show_login_form()
     with tab2:
         show_signup_form()
-
-
-def main():
-    st.set_page_config(
-        page_title="Authentication",
-        page_icon="🔐",
-        layout="centered"
-    )
-    show_auth_page()
-
-
-if __name__ == "__main__":
-    main()
