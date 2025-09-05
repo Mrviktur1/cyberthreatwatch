@@ -66,6 +66,7 @@ st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡
 # Auto-refresh every 60s
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
+
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
@@ -95,21 +96,24 @@ class CyberThreatWatch:
             st.markdown("Real-time Threat Intelligence Dashboard")
         st.markdown("---")
 
-# --- 🔐 Authentication Gate ---
+
+# --- 🔐 Authentication ---
+auth.handle_oauth_callback()  # process Google redirect if present
+
 if not auth.is_authenticated():
     auth.show_auth_page()
     st.stop()
 
-# --- Navigation ---
+# --- Sidebar Navigation ---
 page = st.sidebar.radio(
     "Navigation",
-    ["Dashboard", "Search", "Alerts", "Reports", "Threat Detection", "Settings"]
+    ["Dashboard", "Search", "Alerts", "Reports", "Threat Detection", "Settings", "Logout"]
 )
 
 app = CyberThreatWatch()
 app.render_header()
 
-# --- Pages (unchanged) ---
+# --- Pages ---
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
@@ -241,3 +245,8 @@ elif page == "Settings":
     st.subheader("⚙️ Settings")
     theme = st.selectbox("Theme", ["Light", "Dark", "System"])
     st.write(f"Theme set to: {theme}")
+
+elif page == "Logout":
+    auth.logout()
+    st.success("👋 You have been logged out.")
+    st.rerun()
