@@ -1,7 +1,7 @@
 import streamlit as st
 from supabase import create_client, Client
 
-# ✅ Initialize Supabase client once
+# ✅ Initialize Supabase client
 @st.cache_resource
 def init_supabase() -> Client:
     url: str = st.secrets["SUPABASE_URL"]
@@ -40,55 +40,35 @@ def login(email: str, password: str):
 
 
 def login_with_google():
-    """Open Google OAuth URL in a new tab."""
+    """Generate Supabase-hosted Google OAuth link"""
     try:
-        redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")
-        res = supabase.auth.get_authorization_url(provider="google", redirect_to=redirect_to)
-        if res and res.url:
-            st.session_state["oauth_url"] = res.url
-            return True
-        st.error("❌ Could not initiate Google login.")
-        return False
+        site_url = st.secrets.get("SITE_URL", "http://localhost:8501")
+        google_url = (
+            f"{st.secrets['SUPABASE_URL']}/auth/v1/authorize"
+            f"?provider=google&redirect_to={site_url}"
+        )
+        st.markdown(f"[🔗 Continue with Google]({google_url})", unsafe_allow_html=True)
     except Exception as e:
         st.error(f"Google login failed: {e}")
-        return False
-
-
-def logout():
-    try:
-        supabase.auth.sign_out()
-        st.session_state.pop("user", None)
-        st.success("👋 Logged out successfully!")
-        return True
-    except Exception as e:
-        st.error(f"Error during logout: {e}")
-        return False
 
 
 def handle_oauth_callback():
     """Handle OAuth callback after redirect"""
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            st.session_state["user"] = session.user
-            st.success(f"✅ Welcome {session.user.email}")
-            st.experimental_set_query_params()  # clear URL params
-            st.experimental_rerun()
-    except Exception as e:
-        st.error(f"OAuth callback error: {e}")
+    query_params = st.query_params
+    if "access_token" in query_params:
+        st.session_state["user"] = {
+            "access_token": query_params["access_token"],
+            "refresh_token": query_params.get("refresh_token"),
+            "provider": "google"
+        }
+        st.success("✅ Logged in with Google!")
+        # clear query params
+        st.query_params.clear()
+        st.rerun()
 
 
 def is_authenticated():
-    if "user" in st.session_state:
-        return True
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            st.session_state["user"] = session.user
-            return True
-    except Exception:
-        pass
-    return False
+    return "user" in st.session_state
 
 
 def get_current_user():
@@ -97,11 +77,16 @@ def get_current_user():
     return None
 
 
+def logout():
+    st.session_state.pop("user", None)
+    st.success("👋 Logged out successfully!")
+    st.rerun()
+
 # ---------------- UI ---------------- #
 
 def show_login_form():
     with st.form("login_form"):
-        st.subheader("Login")
+        st.subheader("Login with Email")
         email = st.text_input("Email")
         password = st.text_input("Password", type="password")
         submit = st.form_submit_button("Login")
@@ -114,15 +99,13 @@ def show_login_form():
                 st.error("Please enter both email and password")
 
     st.write("---")
-    st.write("Or login with:")
-    if st.button("🔗 Google Login"):
-        if login_with_google() and "oauth_url" in st.session_state:
-            st.markdown(f"[👉 Continue with Google]({st.session_state.oauth_url})")
+    st.write("Or login with Google:")
+    login_with_google()
 
 
 def show_signup_form():
     with st.form("signup_form"):
-        st.subheader("Sign Up")
+        st.subheader("Sign Up with Email")
         email = st.text_input("Email", key="signup_email")
         password = st.text_input("Password", type="password", key="signup_password")
         confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
@@ -141,14 +124,20 @@ def show_signup_form():
 
 def show_auth_page():
     st.title("🔐 User Authentication")
+
     handle_oauth_callback()
+
     if is_authenticated():
         user = get_current_user()
-        st.success(f"✅ Welcome, {user.email}!")
+        if isinstance(user, dict):  # Google login
+            st.success("✅ Logged in with Google")
+        else:  # Email/password login
+            st.success(f"✅ Welcome, {user.email}!")
+
         if st.button("Logout"):
             logout()
-            st.rerun()
         return
+
     tab1, tab2 = st.tabs(["Login", "Sign Up"])
     with tab1:
         show_login_form()
