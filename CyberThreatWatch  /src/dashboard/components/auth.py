@@ -1,172 +1,128 @@
 import streamlit as st
-from supabase import create_client, Client
+import streamlit_authenticator as stauth
+import os
+import requests
+import json
+from urllib.parse import urlencode
 
-# ✅ Initialize Supabase client once
-@st.cache_resource
-def init_supabase() -> Client:
-    url: str = st.secrets["SUPABASE_URL"]
-    key: str = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+# -------------------------
+# Config
+# -------------------------
+GOOGLE_CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
+REDIRECT_URI = st.secrets.get("REDIRECT_URI", "https://cyberwatch.streamlit.app")
 
-supabase = init_supabase()
+# -------------------------
+# Email/Password Authenticator
+# -------------------------
+def init_authenticator():
+    credentials = {
+        "usernames": {
+            "testuser": {
+                "name": "Test User",
+                "password": stauth.Hasher(["testpass"]).generate()[0],
+                "email": "test@example.com"
+            }
+        }
+    }
 
-# ---------------- AUTH FUNCTIONS ---------------- #
-
-def signup(email: str, password: str):
-    try:
-        response = supabase.auth.sign_up({"email": email, "password": password})
-        if response.user:
-            st.success("✅ Signup successful! Please check your email to confirm.")
-            return True
-        st.error("❌ Signup failed. Try again.")
-        return False
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
-
-
-def login(email: str, password: str):
-    try:
-        response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        if response.user:
-            st.session_state["user"] = response.user
-            st.success(f"✅ Welcome {response.user.email}")
-            return True
-        st.error("❌ Invalid credentials.")
-        return False
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
+    authenticator = stauth.Authenticate(
+        credentials,
+        "auth_cookie", "auth_key", cookie_expiry_days=7
+    )
+    return authenticator
 
 
-def login_with_google():
-    """Open Google OAuth URL in a new tab."""
-    try:
-        redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")
-        res = supabase.auth.sign_in_with_oauth(
-            {"provider": "google", "options": {"redirect_to": redirect_to}}
-        )
-        if res and "url" in res:
-            st.session_state["oauth_url"] = res["url"]
-            return True
-        st.error("❌ Could not initiate Google login.")
-        return False
-    except Exception as e:
-        st.error(f"Google login failed: {e}")
-        return False
+def login_email_password():
+    authenticator = init_authenticator()
+    name, auth_status, username = authenticator.login("Login with Email", "main")
 
-
-def logout():
-    try:
-        supabase.auth.sign_out()
-        st.session_state.pop("user", None)
-        st.success("👋 Logged out successfully!")
+    if auth_status:
+        st.session_state["authenticator"] = authenticator
+        st.session_state["user"] = {"name": name, "username": username, "method": "password"}
         return True
-    except Exception as e:
-        st.error(f"Error during logout: {e}")
-        return False
+    elif auth_status is False:
+        st.error("❌ Username/password is incorrect")
+    else:
+        st.info("ℹ️ Please log in with your email/password")
 
-
-def handle_oauth_callback():
-    """Handle OAuth callback after redirect"""
-    try:
-        params = st.query_params   # ✅ updated from experimental_get_query_params
-        if "code" in params:
-            session = supabase.auth.get_session()
-            if session and session.user:
-                user = session.user
-                st.session_state["user"] = user
-
-                # --- ✅ Ensure user is stored in Supabase "users" table ---
-                try:
-                    email = user.email
-                    supabase.table("users").upsert({
-                        "email": email,
-                        "provider": "google"
-                    }).execute()
-                except Exception as db_err:
-                    st.warning(f"⚠️ Could not sync user to database: {db_err}")
-
-                st.success(f"✅ Welcome {user.email}")
-                st.query_params.clear()   # ✅ clear URL params
-                st.rerun()
-    except Exception as e:
-        st.error(f"OAuth callback error: {e}")
-
-
-def is_authenticated():
-    if "user" in st.session_state:
-        return True
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            st.session_state["user"] = session.user
-            return True
-    except Exception:
-        pass
     return False
 
 
-def get_current_user():
-    if is_authenticated():
-        return st.session_state["user"]
-    return None
+# -------------------------
+# Google OAuth Flow
+# -------------------------
+def get_google_auth_url():
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
 
 
-# ---------------- UI ---------------- #
+def handle_google_callback():
+    query_params = st.query_params  # ✅ new API
+    if "code" in query_params:
+        code = query_params["code"]
 
-def show_login_form():
-    with st.form("login_form"):
-        st.subheader("Login")
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
-
-        if submit:
-            if email and password:
-                if login(email, password):
-                    st.rerun()
-            else:
-                st.error("Please enter both email and password")
-
-    st.write("---")
-    st.write("Or login with:")
-    if st.button("🔗 Google Login"):
-        if login_with_google() and "oauth_url" in st.session_state:
-            st.markdown(f"[👉 Continue with Google]({st.session_state.oauth_url})")
-
-
-def show_signup_form():
-    with st.form("signup_form"):
-        st.subheader("Sign Up")
-        email = st.text_input("Email", key="signup_email")
-        password = st.text_input("Password", type="password", key="signup_password")
-        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
-        submit = st.form_submit_button("Sign Up")
-
-        if submit:
-            if email and password and confirm_password:
-                if password == confirm_password:
-                    if signup(email, password):
-                        st.rerun()
-                else:
-                    st.error("Passwords do not match")
-            else:
-                st.error("Please fill all fields")
+        # Exchange code for token
+        token_url = "https://oauth2.googleapis.com/token"
+        data = {
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": REDIRECT_URI,
+            "grant_type": "authorization_code"
+        }
+        token_res = requests.post(token_url, data=data)
+        if token_res.status_code == 200:
+            tokens = token_res.json()
+            userinfo_res = requests.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {tokens['access_token']}"}
+            )
+            if userinfo_res.status_code == 200:
+                profile = userinfo_res.json()
+                st.session_state["user"] = {
+                    "name": profile.get("name"),
+                    "email": profile.get("email"),
+                    "picture": profile.get("picture"),
+                    "method": "google"
+                }
+                return True
+        st.error("❌ Google authentication failed.")
+    return False
 
 
-def show_auth_page():
-    st.title("🔐 User Authentication")
-    handle_oauth_callback()
-    if is_authenticated():
-        user = get_current_user()
-        st.success(f"✅ Welcome, {user.email}!")
-        if st.button("Logout"):
-            logout()
-            st.rerun()
-        return
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
-    with tab1:
-        show_login_form()
-    with tab2:
-        show_signup_form()
+def login_google():
+    if "user" in st.session_state and st.session_state["user"].get("method") == "google":
+        return True
+
+    st.markdown("### Or login with Google")
+    login_url = get_google_auth_url()
+    st.markdown(f"[🔑 Sign in with Google]({login_url})")
+
+    return handle_google_callback()
+
+
+# -------------------------
+# Unified Login
+# -------------------------
+def login():
+    # First check Google
+    if login_google():
+        return True
+
+    # Otherwise fallback to email/password
+    return login_email_password()
+
+
+def logout():
+    if "authenticator" in st.session_state:
+        st.session_state["authenticator"].logout("Logout", "sidebar")
+    st.session_state.clear()
+    st.rerun()
