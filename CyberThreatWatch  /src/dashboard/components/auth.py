@@ -40,19 +40,15 @@ def login(email: str, password: str):
 
 
 def login_with_google():
-    """Open Google OAuth URL in a new tab."""
+    """Initiate Google OAuth login"""
     try:
         redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")
         res = supabase.auth.sign_in_with_oauth(
             {"provider": "google", "options": {"redirect_to": redirect_to}}
         )
-
-        # ✅ Fix: handle both dict and object return types
-        if res and (hasattr(res, "url") or (isinstance(res, dict) and "url" in res)):
-            oauth_url = res.url if hasattr(res, "url") else res["url"]
-            st.session_state["oauth_url"] = oauth_url
+        if res and "url" in res:
+            st.session_state["oauth_url"] = res["url"]
             return True
-
         st.error("❌ Could not initiate Google login.")
         return False
     except Exception as e:
@@ -60,52 +56,72 @@ def login_with_google():
         return False
 
 
+def handle_oauth_callback():
+    """Handle OAuth callback after Google redirect"""
+    try:
+        params = st.experimental_get_query_params()
+
+        # ✅ Supabase returns tokens in query params
+        if "access_token" in params:
+            access_token = params["access_token"][0]
+            refresh_token = params.get("refresh_token", [None])[0]
+
+            # Save in session_state
+            st.session_state["access_token"] = access_token
+            st.session_state["refresh_token"] = refresh_token
+
+            # Restore session
+            session = supabase.auth.set_session(access_token, refresh_token)
+            if session and session.user:
+                st.session_state["user"] = session.user
+
+                # Ensure user is in Supabase "users" table
+                try:
+                    supabase.table("users").upsert({
+                        "email": session.user.email,
+                        "provider": "google"
+                    }).execute()
+                except Exception as db_err:
+                    st.warning(f"⚠️ Could not sync user to database: {db_err}")
+
+                st.success(f"✅ Welcome {session.user.email}")
+                st.experimental_set_query_params()  # clear tokens from URL
+                st.experimental_rerun()
+        else:
+            # fallback: refresh session
+            session = supabase.auth.get_session()
+            if session and session.user:
+                st.session_state["user"] = session.user
+
+    except Exception as e:
+        st.error(f"OAuth callback error: {e}")
+
+
 def logout():
     try:
         supabase.auth.sign_out()
-        st.session_state.pop("user", None)
-        st.success("👋 Logged out successfully!")
-        return True
-    except Exception as e:
-        st.error(f"Error during logout: {e}")
-        return False
-
-
-def handle_oauth_callback():
-    """Handle OAuth callback after redirect"""
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            user = session.user
-            st.session_state["user"] = user
-
-            # --- ✅ Ensure user is stored in Supabase "users" table ---
-            try:
-                email = user.email
-                supabase.table("users").upsert({
-                    "email": email,
-                    "provider": "google"
-                }).execute()
-            except Exception as db_err:
-                st.warning(f"⚠️ Could not sync user to database: {db_err}")
-
-            st.success(f"✅ Welcome {user.email}")
-            st.experimental_set_query_params()  # clear URL params
-            st.experimental_rerun()
-    except Exception as e:
-        st.error(f"OAuth callback error: {e}")
+    except Exception:
+        pass
+    st.session_state.pop("user", None)
+    st.session_state.pop("access_token", None)
+    st.session_state.pop("refresh_token", None)
+    st.success("👋 Logged out successfully!")
 
 
 def is_authenticated():
     if "user" in st.session_state:
         return True
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            st.session_state["user"] = session.user
-            return True
-    except Exception:
-        pass
+    if "access_token" in st.session_state:
+        try:
+            session = supabase.auth.set_session(
+                st.session_state["access_token"],
+                st.session_state.get("refresh_token")
+            )
+            if session and session.user:
+                st.session_state["user"] = session.user
+                return True
+        except Exception:
+            pass
     return False
 
 
@@ -113,7 +129,6 @@ def get_current_user():
     if is_authenticated():
         return st.session_state["user"]
     return None
-
 
 # ---------------- UI ---------------- #
 
