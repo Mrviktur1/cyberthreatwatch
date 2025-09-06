@@ -43,10 +43,16 @@ def login_with_google():
     """Open Google OAuth URL in a new tab."""
     try:
         redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")
-        res = supabase.auth.sign_in_with_oauth({"provider": "google", "options": {"redirect_to": redirect_to}})
-        if res and "url" in res:
-            st.session_state["oauth_url"] = res["url"]
+        res = supabase.auth.sign_in_with_oauth(
+            {"provider": "google", "options": {"redirect_to": redirect_to}}
+        )
+
+        # ✅ Fix: handle both dict and object return types
+        if res and (hasattr(res, "url") or (isinstance(res, dict) and "url" in res)):
+            oauth_url = res.url if hasattr(res, "url") else res["url"]
+            st.session_state["oauth_url"] = oauth_url
             return True
+
         st.error("❌ Could not initiate Google login.")
         return False
     except Exception as e:
