@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import logging
 from PIL import Image
 from streamlit_autorefresh import st_autorefresh
+from functools import lru_cache
 
 # Add parent directory for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -70,7 +71,7 @@ st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
-        self.signature_path = "assets/h_Signa....png"
+        self.signature_path = "assets/h_Signature.png"  # ✅ fixed name
         self.alerts_panel = AlertsPanel(supabase=supabase, otx=otx)
 
     def load_image(self, path, width=None):
@@ -112,6 +113,13 @@ page = st.sidebar.radio(
 
 app = CyberThreatWatch()
 app.render_header()
+
+# --- GeoIP cache ---
+from dashboard.utils.geoip_helper import ip_to_location
+
+@lru_cache(maxsize=5000)
+def cached_ip_lookup(ip):
+    return ip_to_location(ip)
 
 # --- Pages ---
 if page == "Dashboard":
@@ -172,10 +180,9 @@ if page == "Dashboard":
 
                 # GeoIP World Map
                 if "source_ip" in df.columns:
-                    from dashboard.utils.geoip_helper import ip_to_location
                     geo_data = []
                     for ip in df["source_ip"].dropna().unique():
-                        loc = ip_to_location(ip)
+                        loc = cached_ip_lookup(ip)
                         if loc:
                             geo_data.append(loc)
                     if geo_data:
