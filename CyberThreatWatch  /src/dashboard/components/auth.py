@@ -40,7 +40,7 @@ def login(email: str, password: str):
 
 
 def login_with_google():
-    """Initiate Google OAuth login"""
+    """Open Google OAuth URL in a new tab."""
     try:
         redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")
         res = supabase.auth.sign_in_with_oauth(
@@ -56,72 +56,54 @@ def login_with_google():
         return False
 
 
-def handle_oauth_callback():
-    """Handle OAuth callback after Google redirect"""
+def logout():
     try:
-        params = st.experimental_get_query_params()
+        supabase.auth.sign_out()
+        st.session_state.pop("user", None)
+        st.success("👋 Logged out successfully!")
+        return True
+    except Exception as e:
+        st.error(f"Error during logout: {e}")
+        return False
 
-        # ✅ Supabase returns tokens in query params
-        if "access_token" in params:
-            access_token = params["access_token"][0]
-            refresh_token = params.get("refresh_token", [None])[0]
 
-            # Save in session_state
-            st.session_state["access_token"] = access_token
-            st.session_state["refresh_token"] = refresh_token
-
-            # Restore session
-            session = supabase.auth.set_session(access_token, refresh_token)
+def handle_oauth_callback():
+    """Handle OAuth callback after redirect"""
+    try:
+        params = st.query_params   # ✅ updated from experimental_get_query_params
+        if "code" in params:
+            session = supabase.auth.get_session()
             if session and session.user:
-                st.session_state["user"] = session.user
+                user = session.user
+                st.session_state["user"] = user
 
-                # Ensure user is in Supabase "users" table
+                # --- ✅ Ensure user is stored in Supabase "users" table ---
                 try:
+                    email = user.email
                     supabase.table("users").upsert({
-                        "email": session.user.email,
+                        "email": email,
                         "provider": "google"
                     }).execute()
                 except Exception as db_err:
                     st.warning(f"⚠️ Could not sync user to database: {db_err}")
 
-                st.success(f"✅ Welcome {session.user.email}")
-                st.experimental_set_query_params()  # clear tokens from URL
-                st.experimental_rerun()
-        else:
-            # fallback: refresh session
-            session = supabase.auth.get_session()
-            if session and session.user:
-                st.session_state["user"] = session.user
-
+                st.success(f"✅ Welcome {user.email}")
+                st.query_params.clear()   # ✅ clear URL params
+                st.rerun()
     except Exception as e:
         st.error(f"OAuth callback error: {e}")
-
-
-def logout():
-    try:
-        supabase.auth.sign_out()
-    except Exception:
-        pass
-    st.session_state.pop("user", None)
-    st.session_state.pop("access_token", None)
-    st.session_state.pop("refresh_token", None)
-    st.success("👋 Logged out successfully!")
 
 
 def is_authenticated():
     if "user" in st.session_state:
         return True
-    if "access_token" in st.session_state:
-        try:
-            session = supabase.auth.set_session(
-                st.session_state["access_token"],
-                st.session_state.get("refresh_token")
-            )
-            if session and session.user:
-                st.session_state["user"] = session.user
-                return True
-        except Exception:
-            pass
+    try:
+        session = supabase.auth.get_session()
+        if session and session.user:
+            st.session_state["user"] = session.user
+            return True
+    except Exception:
+        pass
     return False
 
 
@@ -129,6 +111,7 @@ def get_current_user():
     if is_authenticated():
         return st.session_state["user"]
     return None
+
 
 # ---------------- UI ---------------- #
 
