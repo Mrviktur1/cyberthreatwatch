@@ -71,7 +71,7 @@ st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
-        self.signature_path = "assets/h_Signature.png"  # ✅ fixed name
+        self.signature_path = "assets/h_Signature.png"
         self.alerts_panel = AlertsPanel(supabase=supabase, otx=otx)
 
     def load_image(self, path, width=None):
@@ -101,9 +101,29 @@ class CyberThreatWatch:
 # --- 🔐 Authentication ---
 auth.handle_oauth_callback()  # process Google redirect if present
 
+# Restore Supabase session if available
+if "session" in st.session_state and st.session_state["session"]:
+    try:
+        supabase.auth.set_session(st.session_state["session"])
+    except Exception as e:
+        logger.warning(f"Session restore failed: {e}")
+
+# If user not authenticated, show login/signup
 if not auth.is_authenticated():
     auth.show_auth_page()
     st.stop()
+
+# ✅ Persist Supabase session for future reloads
+try:
+    session = supabase.auth.get_session()
+    if session:
+        st.session_state["session"] = {
+            "access_token": session.access_token,
+            "refresh_token": session.refresh_token
+        }
+except Exception as e:
+    logger.warning(f"Could not fetch Supabase session: {e}")
+
 
 # --- Sidebar Navigation ---
 page = st.sidebar.radio(
