@@ -16,8 +16,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
-from dashboard.components import auth
+from dashboard import auth
 from dashboard.utils.otx_collector import collect_otx_alerts
+from dashboard.utils.geoip_helper import ip_to_location
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -26,22 +27,20 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# --- Supabase Client ---
+# ------------------ Supabase Client ------------------ #
 @st.cache_resource
 def init_supabase() -> Client:
     try:
-        if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
-            url: str = st.secrets["SUPABASE_URL"]
-            key: str = st.secrets["SUPABASE_KEY"]
-            return create_client(url, key)
-        return None
+        url: str = st.secrets["SUPABASE_URL"]
+        key: str = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
     except Exception as e:
         logger.error(f"Supabase connection error: {e}")
         return None
 
 supabase = init_supabase()
 
-# --- OTX Client ---
+# ------------------ OTX Client ------------------ #
 @st.cache_resource
 def init_otx():
     try:
@@ -54,24 +53,24 @@ def init_otx():
 
 otx = init_otx()
 
-# --- Session Data ---
+# ------------------ Session Defaults ------------------ #
 if "alerts_data" not in st.session_state:
     st.session_state.alerts_data = []
 
 if "threat_data" not in st.session_state:
     st.session_state.threat_data = []
 
-# --- Main Config ---
+# ------------------ Main Config ------------------ #
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
 # Auto-refresh every 60s
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
-
+# ------------------ Main App ------------------ #
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
-        self.signature_path = "assets/h_Signature.png"  # ✅ fixed name
+        self.signature_path = "assets/h_Signature.png"
         self.alerts_panel = AlertsPanel(supabase=supabase, otx=otx)
 
     def load_image(self, path, width=None):
@@ -98,14 +97,23 @@ class CyberThreatWatch:
         st.markdown("---")
 
 
-# --- 🔐 Authentication ---
-auth.handle_oauth_callback()  # process Google redirect if present
-
-if not auth.is_authenticated():
-    auth.show_auth_page()
+# ------------------ Authentication ------------------ #
+if not auth.login():
     st.stop()
 
-# --- Sidebar Navigation ---
+# ✅ If user logged in with Google, store in Supabase
+user = st.session_state.get("user")
+if user and user.get("method") == "google" and supabase:
+    try:
+        supabase.table("users").upsert({
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "provider": "google"
+        }).execute()
+    except Exception as e:
+        st.warning(f"⚠️ Could not sync Google user: {e}")
+
+# ------------------ Sidebar Navigation ------------------ #
 page = st.sidebar.radio(
     "Navigation",
     ["Dashboard", "Search", "Alerts", "Reports", "Threat Detection", "Settings", "Logout"]
@@ -114,14 +122,12 @@ page = st.sidebar.radio(
 app = CyberThreatWatch()
 app.render_header()
 
-# --- GeoIP cache ---
-from dashboard.utils.geoip_helper import ip_to_location
-
+# ------------------ GeoIP cache ------------------ #
 @lru_cache(maxsize=5000)
 def cached_ip_lookup(ip):
     return ip_to_location(ip)
 
-# --- Pages ---
+# ------------------ Pages ------------------ #
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
