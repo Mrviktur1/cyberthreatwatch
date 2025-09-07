@@ -11,23 +11,23 @@ from PIL import Image
 from streamlit_autorefresh import st_autorefresh
 from functools import lru_cache
 
-# ✅ Add parent directory for imports
+# Add parent directory for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-# ✅ Import custom components
+# Import custom components
 from dashboard.components.alerts_panel import AlertsPanel
 from dashboard.components import auth
 from dashboard.utils.otx_collector import collect_otx_alerts
 from dashboard.utils.geoip_helper import ip_to_location
 
-# ---------------- Logging setup ---------------- #
+# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------- Load environment variables ---------------- #
+# Load environment variables
 load_dotenv()
 
-# ---------------- Supabase Client ---------------- #
+# --- Supabase Client ---
 @st.cache_resource
 def init_supabase() -> Client:
     try:
@@ -42,7 +42,7 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# ---------------- OTX Client ---------------- #
+# --- OTX Client ---
 @st.cache_resource
 def init_otx():
     try:
@@ -55,19 +55,19 @@ def init_otx():
 
 otx = init_otx()
 
-# ---------------- Session Data ---------------- #
+# --- Session Data ---
 if "alerts_data" not in st.session_state:
     st.session_state.alerts_data = []
 if "threat_data" not in st.session_state:
     st.session_state.threat_data = []
 
-# ---------------- Main Config ---------------- #
+# --- Main Config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
 # Auto-refresh every 60s
 st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
-# ---------------- Main App Class ---------------- #
+
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
@@ -97,14 +97,31 @@ class CyberThreatWatch:
             st.markdown("Real-time Threat Intelligence Dashboard")
         st.markdown("---")
 
-# ---------------- Authentication ---------------- #
-auth.handle_oauth_callback()  # Process Google redirect if present
 
+# --- 🔐 Authentication Flow ---
 if not auth.is_authenticated():
-    auth.show_auth_page()
+    st.title("🔐 Login")
+    email = st.text_input("Enter your email")
+    if st.button("Send Magic Link"):
+        auth.send_magic_link(email)
     st.stop()
 
-# ---------------- Sidebar Navigation ---------------- #
+user = auth.get_current_user()
+
+# MFA setup for first-time users
+if not st.session_state.get("mfa_enabled"):
+    st.info("You must enable MFA before continuing.")
+    if auth.enroll_mfa():
+        st.rerun()
+    st.stop()
+
+# MFA verification at login
+if not st.session_state.get("mfa_verified"):
+    st.warning("Enter your MFA code to complete login.")
+    auth.verify_mfa()
+    st.stop()
+
+# --- Sidebar Navigation ---
 page = st.sidebar.radio(
     "Navigation",
     ["Dashboard", "Search", "Alerts", "Reports", "Threat Detection", "Settings", "Logout"]
@@ -113,12 +130,12 @@ page = st.sidebar.radio(
 app = CyberThreatWatch()
 app.render_header()
 
-# ---------------- GeoIP cache ---------------- #
+# --- GeoIP cache ---
 @lru_cache(maxsize=5000)
 def cached_ip_lookup(ip):
     return ip_to_location(ip)
 
-# ---------------- Pages ---------------- #
+# --- Pages ---
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
