@@ -1,170 +1,104 @@
 import streamlit as st
 from supabase import create_client, Client
+import pyotp
+import qrcode
+import io
+import os
 
-# ✅ Initialize Supabase client once
+# --- Supabase Client ---
 @st.cache_resource
-def init_supabase() -> Client:
-    url: str = st.secrets["SUPABASE_URL"]
-    key: str = st.secrets["SUPABASE_KEY"]
+def get_supabase() -> Client:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
-supabase = init_supabase()
+supabase = get_supabase()
 
-# ---------------- AUTH FUNCTIONS ---------------- #
-
-def signup(email: str, password: str):
-    try:
-        response = supabase.auth.sign_up({"email": email, "password": password})
-        if response.user:
-            st.success("✅ Signup successful! Please check your email to confirm.")
-            return True
-        st.error("❌ Signup failed. Try again.")
-        return False
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
-
-
-def login(email: str, password: str):
-    try:
-        response = supabase.auth.sign_in_with_password({"email": email, "password": password})
-        if response.user:
-            st.session_state["user"] = response.user
-            st.success(f"✅ Welcome {response.user.email}")
-            return True
-        st.error("❌ Invalid credentials.")
-        return False
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
-
-
-def login_with_google():
-    """Open Google OAuth URL in a new tab."""
-    try:
-        redirect_to = st.secrets.get("SITE_URL", "http://localhost:8501")
-        res = supabase.auth.sign_in_with_oauth(
-            {"provider": "google", "options": {"redirect_to": redirect_to}}
-        )
-        if res and "url" in res:
-            st.session_state["oauth_url"] = res["url"]
-            return True
-        st.error("❌ Could not initiate Google login.")
-        return False
-    except Exception as e:
-        st.error(f"Google login failed: {e}")
-        return False
-
-
-def logout():
-    try:
-        supabase.auth.sign_out()
-        st.session_state.pop("user", None)
-        st.success("👋 Logged out successfully!")
-        return True
-    except Exception as e:
-        st.error(f"Error during logout: {e}")
-        return False
-
-
-def handle_oauth_callback():
-    """Handle OAuth callback after redirect"""
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            user = session.user
-            st.session_state["user"] = user
-
-            # --- ✅ Ensure user is stored in Supabase "users" table ---
-            try:
-                email = user.email
-                supabase.table("users").upsert({
-                    "email": email,
-                    "provider": "google"
-                }).execute()
-            except Exception as db_err:
-                st.warning(f"⚠️ Could not sync user to database: {db_err}")
-
-            st.success(f"✅ Welcome {user.email}")
-            st.query_params.clear()  # ✅ replaces st.experimental_set_query_params
-            st.rerun()
-    except Exception as e:
-        st.error(f"OAuth callback error: {e}")
-
-
+# --- Authentication Helpers ---
 def is_authenticated():
-    if "user" in st.session_state:
-        return True
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            st.session_state["user"] = session.user
-            return True
-    except Exception:
-        pass
-    return False
-
+    """Check if a user session exists."""
+    return "user" in st.session_state and st.session_state.user is not None
 
 def get_current_user():
-    if is_authenticated():
-        return st.session_state["user"]
-    return None
+    """Return the logged-in user."""
+    return st.session_state.get("user")
 
+def send_magic_link(email: str):
+    """Send a Supabase magic link to user's email."""
+    try:
+        res = supabase.auth.sign_in_with_otp({"email": email})
+        if res:
+            st.info(f"📧 Magic link sent to {email}. Check your inbox.")
+    except Exception as e:
+        st.error(f"Magic link error: {e}")
 
-# ---------------- UI ---------------- #
+def logout():
+    """Clear session state and log out user."""
+    st.session_state.user = None
+    st.session_state.mfa_enabled = False
+    st.session_state.mfa_verified = False
+    st.session_state.mfa_secret = None
 
-def show_login_form():
-    with st.form("login_form"):
-        st.subheader("Login")
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
+def get_user_by_email(email: str):
+    """Fetch a user from Supabase users table (optional)."""
+    try:
+        data = supabase.table("users").select("*").eq("email", email).execute()
+        if data.data:
+            return data.data[0]
+        return None
+    except Exception:
+        return None
 
-        if submit:
-            if email and password:
-                if login(email, password):
-                    st.rerun()
-            else:
-                st.error("Please enter both email and password")
+# --- MFA Functions ---
+def enroll_mfa():
+    """
+    Setup MFA for the user. Show QR and fallback secret.
+    Returns True when MFA is enabled.
+    """
+    if "mfa_secret" not in st.session_state or not st.session_state.mfa_secret:
+        st.session_state.mfa_secret = pyotp.random_base32()
 
-    st.write("---")
-    st.write("Or login with:")
-    if st.button("🔗 Google Login"):
-        if login_with_google() and "oauth_url" in st.session_state:
-            st.markdown(f"[👉 Continue with Google]({st.session_state.oauth_url})")
+    secret = st.session_state.mfa_secret
+    user = get_current_user()
+    email = user.get("email", "user@example.com")
 
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=email, issuer_name="CyberThreatWatch")
 
-def show_signup_form():
-    with st.form("signup_form"):
-        st.subheader("Sign Up")
-        email = st.text_input("Email", key="signup_email")
-        password = st.text_input("Password", type="password", key="signup_password")
-        confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
-        submit = st.form_submit_button("Sign Up")
+    # Generate QR code
+    qr = qrcode.make(uri)
+    buf = io.BytesIO()
+    qr.save(buf, format="PNG")
+    st.image(buf.getvalue(), caption="Scan this QR with your Authenticator app")
 
-        if submit:
-            if email and password and confirm_password:
-                if password == confirm_password:
-                    if signup(email, password):
-                        st.rerun()
-                else:
-                    st.error("Passwords do not match")
-            else:
-                st.error("Please fill all fields")
+    st.write("Or manually enter this secret key:")
+    st.code(secret)
 
+    code = st.text_input("Enter the 6-digit code from your Authenticator app", type="password")
+    if st.button("✅ Verify MFA Setup"):
+        if totp.verify(code):
+            st.success("MFA enabled successfully ✅")
+            st.session_state.mfa_enabled = True
+            return True
+        else:
+            st.error("❌ Invalid code, try again.")
+    return False
 
-def show_auth_page():
-    st.title("🔐 User Authentication")
-    handle_oauth_callback()
-    if is_authenticated():
-        user = get_current_user()
-        st.success(f"✅ Welcome, {user.email}!")
-        if st.button("Logout"):
-            logout()
-            st.rerun()
-        return
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
-    with tab1:
-        show_login_form()
-    with tab2:
-        show_signup_form()
+def verify_mfa():
+    """Verify user-provided MFA code."""
+    secret = st.session_state.get("mfa_secret")
+    if not secret:
+        st.error("No MFA secret found. Please enroll first.")
+        return False
+
+    totp = pyotp.TOTP(secret)
+    code = st.text_input("Enter your 6-digit MFA code", type="password")
+
+    if st.button("🔑 Verify Code"):
+        if totp.verify(code):
+            st.success("MFA verified 🎉")
+            st.session_state.mfa_verified = True
+            return True
+        else:
+            st.error("❌ Invalid MFA code.")
+    return False
