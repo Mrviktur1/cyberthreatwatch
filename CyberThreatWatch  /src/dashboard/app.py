@@ -459,11 +459,11 @@ elif page == "Settings":
         st.button("Export All Data", use_container_width=True)
         st.button("Reset Dashboard", use_container_width=True)
 
-# Footer
+# Footer - FIXED SYNTAX ERROR HERE
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: gray;'>"
     "CyberThreatWatch v1.0 • Real-time Threat Intelligence Dashboard"
     "</div>",
     unsafe_allow_html=True
-))
+)
