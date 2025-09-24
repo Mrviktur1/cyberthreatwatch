@@ -214,7 +214,7 @@ class LoginComponent:
         self.handle_oauth_callback()
 
         # Check if user needs to authenticate
-        from .. import auth
+        from dashboard import auth
         if not auth.is_authenticated():
             self.render_login_page()
             st.stop()
