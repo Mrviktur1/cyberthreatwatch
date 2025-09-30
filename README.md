@@ -141,3 +141,5 @@ Exports reports
 Dashboard Overview
 Threat Map
 
+📜 License
+This project is licensed under the MIT License © 2025 Enemmoh Victor Okechukwu
