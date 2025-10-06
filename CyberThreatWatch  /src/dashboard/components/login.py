@@ -2,6 +2,9 @@ import streamlit as st
 import logging
 from datetime import datetime, timedelta
 
+# ✅ Import hCaptcha component
+from dashboard.components.captcha_component import st_hcaptcha
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -46,11 +49,17 @@ class LoginComponent:
             key="email_login_input"
         )
 
+        # ✅ Add CAPTCHA below email
+        st.markdown("### Human Verification")
+        captcha_token = st_hcaptcha(site_key=st.secrets["HCAPTCHA_SITE_KEY"])
+
         col1, col2 = st.columns([1, 2])
         with col1:
             if st.button("📧 Send Magic Link", use_container_width=True):
-                if self._validate_email(email):
-                    self._send_magic_link(email)
+                if not captcha_token:
+                    st.warning("⚠️ Please complete the CAPTCHA first.")
+                elif self._validate_email(email):
+                    self._send_magic_link(email, captcha_token)
                 else:
                     st.warning("Please enter a valid email address")
 
@@ -110,7 +119,7 @@ class LoginComponent:
             return False
         return True
 
-    def _send_magic_link(self, email: str):
+    def _send_magic_link(self, email: str, captcha_token=None):
         """Send magic link via auth service or fallback."""
         try:
             # Try using auth service if available
@@ -123,7 +132,7 @@ class LoginComponent:
             else:
                 # Fallback to simplified auth
                 from dashboard.components import auth
-                success = auth.send_magic_link(email)
+                success = auth.send_magic_link(email, captcha_token=captcha_token)
                 if success:
                     st.success(f"📧 Magic link sent to {email}")
                 else:
