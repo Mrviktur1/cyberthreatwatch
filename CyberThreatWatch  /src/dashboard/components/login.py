@@ -11,7 +11,7 @@ class LoginComponent:
         self.auth_service = None
         # Try to import auth service, but don't fail if it's not available
         try:
-            from ..services.auth_service import AuthService
+            from dashboard.services.auth_service import AuthService
             self.auth_service = AuthService()
         except ImportError:
             logger.warning("AuthService not available, using simplified auth")
@@ -91,15 +91,15 @@ class LoginComponent:
         with st.expander("🔒 Security Information"):
             st.markdown("""
             **Why we use secure authentication:**
-            - 🔐 **Multi-Factor Authentication** (MFA) available
-            - 📧 **Magic links** - no passwords to remember or steal
-            - ⏰ **Automatic session expiry** for security
-            - 🌐 **HTTPS encryption** for all communications
+            - 🔐 **Multi-Factor Authentication** (MFA) available  
+            - 📧 **Magic links** - no passwords to remember or steal  
+            - ⏰ **Automatic session expiry** for security  
+            - 🌐 **HTTPS encryption** for all communications  
 
             **Your data is protected by:**
-            - Enterprise-grade security protocols
-            - Regular security audits
-            - Compliance with industry standards
+            - Enterprise-grade security protocols  
+            - Regular security audits  
+            - Compliance with industry standards  
             """)
 
     def _validate_email(self, email: str) -> bool:
@@ -122,7 +122,7 @@ class LoginComponent:
                     st.error("❌ Failed to send magic link")
             else:
                 # Fallback to simplified auth
-                from .. import auth
+                from dashboard.components import auth
                 success = auth.send_magic_link(email)
                 if success:
                     st.success(f"📧 Magic link sent to {email}")
@@ -136,7 +136,7 @@ class LoginComponent:
     def _quick_login(self, email: str):
         """Perform quick login for development."""
         try:
-            from .. import auth
+            from dashboard.components import auth
 
             # Use the quick_login function if available, otherwise use standard auth
             if hasattr(auth, 'quick_login'):
@@ -163,9 +163,8 @@ class LoginComponent:
 
     def handle_oauth_callback(self):
         """Handle OAuth callback if using OAuth authentication."""
-        # This would handle OAuth callbacks if you implement Google OAuth later
         try:
-            query_params = st.experimental_get_query_params()
+            query_params = st.query_params  # ✅ modern API
             if query_params.get('code') and query_params.get('state'):
                 # OAuth callback detected
                 if self.auth_service:
@@ -185,10 +184,8 @@ class LoginComponent:
             st.sidebar.markdown(f"**Email:** {st.session_state.user_email}")
             st.sidebar.markdown(f"**Name:** {st.session_state.user_name}")
 
-            # Show session expiry
             expiry = st.session_state.get("session_expiry")
             if expiry:
-                from datetime import datetime
                 time_left = expiry - datetime.now()
                 hours_left = max(0, int(time_left.total_seconds() / 3600))
                 st.sidebar.markdown(f"**Session expires in:** {hours_left} hours")
@@ -196,7 +193,7 @@ class LoginComponent:
     def _perform_logout(self):
         """Perform logout operation."""
         try:
-            from .. import auth
+            from dashboard.components import auth
             auth.logout()
             st.success("👋 You have been logged out successfully!")
             st.rerun()
@@ -210,11 +207,9 @@ class LoginComponent:
 
     def check_authentication(self):
         """Check authentication status and handle redirects."""
-        # Handle any authentication callbacks first
         self.handle_oauth_callback()
 
-        # Check if user needs to authenticate
-        from dashboard import auth
+        from dashboard.components import auth
         if not auth.is_authenticated():
             self.render_login_page()
             st.stop()
@@ -225,13 +220,11 @@ class LoginComponent:
 
     def _check_mfa_requirements(self):
         """Check and handle MFA requirements."""
-        from .. import auth
+        from dashboard.components import auth
 
-        # Skip MFA if not enabled for user
         if not st.session_state.get("mfa_enabled", False):
             return True
 
-        # Check if MFA verification is needed
         if not st.session_state.get("mfa_verified", False):
             st.warning("🔐 MFA Verification Required")
             if auth.verify_mfa():
