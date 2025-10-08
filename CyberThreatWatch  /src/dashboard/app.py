@@ -38,7 +38,7 @@ def init_supabase() -> Client:
             client = create_client(url, key)
             try:
                 result = client.table("alerts").select("id", count="exact").limit(1).execute()
-                logger.info("Supabase connection successful")
+                logger.info("✅ Supabase connection successful")
             except Exception as query_error:
                 logger.warning(f"Supabase query test failed (may be normal): {query_error}")
 
@@ -169,8 +169,12 @@ if "latest_alerts" not in st.session_state:
     st.session_state["latest_alerts"] = []
 
 def update_dashboard(data):
-    """Update session state and rerun the dashboard when new data arrives."""
+    """Update session state and show toast when new data arrives."""
+    old_count = len(st.session_state["latest_alerts"])
     st.session_state["latest_alerts"] = data
+    new_count = len(data)
+    if new_count > old_count:
+        st.toast(f"🚨 New alert received! ({new_count - old_count} new)")
     st.experimental_rerun()
 
 if not st.session_state.get("realtime_active"):
@@ -198,6 +202,9 @@ def cached_ip_lookup(ip):
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
+    # --- Real-Time Refresh Every 10 Seconds ---
+    st.autorefresh(interval=10 * 1000, key="data_refresh")
+
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("🔄 Fetch OTX Threats", use_container_width=True):
@@ -219,6 +226,7 @@ if page == "Dashboard":
             cached_ip_lookup.cache_clear()
             st.success("GeoIP cache cleared!")
 
+    # --- Display Alerts ---
     if st.session_state.alerts_data:
         df = pd.DataFrame(st.session_state.alerts_data)
         if "timestamp" in df.columns:
