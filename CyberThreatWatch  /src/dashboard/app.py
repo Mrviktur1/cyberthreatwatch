@@ -1,3 +1,4 @@
+# src/dashboard/app.py
 import streamlit as st
 import sys
 import os
@@ -10,6 +11,7 @@ import logging
 from PIL import Image
 from functools import lru_cache
 from datetime import datetime, timedelta
+import time
 
 # Add parent directory for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -19,35 +21,26 @@ from dashboard.components.alerts_panel import AlertsPanel
 from dashboard.components.login import LoginComponent
 from dashboard.utils.otx_collector import collect_otx_alerts
 from dashboard.utils.geoip_helper import ip_to_location
+from dashboard.services.sensor import start_sensor, stop_sensor
+from dashboard.services.data_service import data_stream
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 
 # --- Supabase Client ---
 @st.cache_resource
 def init_supabase() -> Client:
     try:
-        if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
-            url: str = st.secrets["SUPABASE_URL"]
-            key: str = st.secrets["SUPABASE_KEY"]
-
-            client = create_client(url, key)
-            try:
-                result = client.table("alerts").select("id", count="exact").limit(1).execute()
-                logger.info("✅ Supabase connection successful")
-            except Exception as query_error:
-                logger.warning(f"Supabase query test failed (may be normal): {query_error}")
-
-            return client
-        return None
+        url, key = st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"]
+        client = create_client(url, key)
+        logger.info("✅ Supabase connected.")
+        return client
     except Exception as e:
-        logger.error(f"Supabase connection error: {e}")
+        logger.error(f"Supabase init error: {e}")
         return None
-
 
 supabase = init_supabase()
 
@@ -57,52 +50,73 @@ def init_otx():
     try:
         if "OTX_API_KEY" in st.secrets:
             return OTXv2(st.secrets["OTX_API_KEY"])
-        return None
     except Exception as e:
         logger.error(f"OTX init error: {e}")
-        return None
-
+    return None
 
 otx = init_otx()
 
-# --- Session Data ---
-if "alerts_data" not in st.session_state:
-    st.session_state.alerts_data = [
-        {
-            "id": 1,
-            "timestamp": datetime.now() - timedelta(hours=2),
-            "severity": "High",
-            "type": "Malware Detection",
-            "source_ip": "192.168.1.100",
-            "description": "Suspicious executable detected",
-            "country": "Unknown",
-            "lat": 0,
-            "lon": 0
-        }
-    ]
+# --- Session defaults ---
+for key, val in {
+    "alerts_data": [],
+    "realtime_active": False,
+    "latest_alerts": [],
+    "last_refresh": time.time()
+}.items():
+    st.session_state.setdefault(key, val)
 
-if "threat_data" not in st.session_state:
-    st.session_state.threat_data = []
+# --- Page Config ---
+st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🔰")
 
-# --- Main Config ---
-st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
+# --- 5D UI Styling ---
+st.markdown("""
+<style>
+[data-testid="stAppViewContainer"] {
+    background: radial-gradient(circle at 10% 10%, #020617 0%, #00040a 80%);
+    color: #E6F7FF;
+    font-family: "Inter", sans-serif;
+}
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg,#0b1120 0%, #05080f 100%);
+    color: #bde8ff;
+    border-right: 1px solid rgba(255,255,255,0.05);
+}
+h1, h2, h3 {
+    color: #aaf5ff;
+    text-shadow: 0 0 12px rgba(0,255,255,0.18);
+}
+.metric-card {
+    background: rgba(255,255,255,0.04);
+    border-radius: 14px;
+    padding: 10px;
+    box-shadow: inset 0 0 20px rgba(0,255,255,0.05);
+    backdrop-filter: blur(6px);
+}
+.stButton>button {
+    background: linear-gradient(90deg,#00ffd5,#007bff);
+    color: white;
+    border-radius:10px;
+    border:none;
+    padding:8px 14px;
+    transition: all 0.2s ease-in-out;
+}
+.stButton>button:hover { transform: scale(1.04); }
+</style>
+""", unsafe_allow_html=True)
 
-# --- Initialize Login Component ---
-login_component = LoginComponent()
+# --- Auth ---
+login = LoginComponent()
+login.check_authentication()
 
-# --- 🔐 Authentication Flow ---
-login_component.check_authentication()
-
-
+# --- Header ---
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = "assets/CyberThreatWatch.png"
         self.signature_path = "assets/h_Signature.png"
-
         try:
             self.alerts_panel = AlertsPanel(supabase=supabase, otx=otx)
         except Exception as e:
-            logger.warning(f"AlertsPanel initialization failed: {e}")
+            logger.warning(f"AlertsPanel init failed: {e}")
             self.alerts_panel = None
 
     def load_image(self, path, width=None):
@@ -112,247 +126,138 @@ class CyberThreatWatch:
                 if width:
                     img = img.resize((width, int(img.height * width / img.width)))
                 return img
-            return None
         except Exception as e:
-            logger.error(f"Image load error ({path}): {e}")
-            return None
+            logger.error(f"Image load error: {e}")
+        return None
 
     def render_header(self):
         col1, col2, col3 = st.columns([1, 3, 1])
         with col1:
-            logo = self.load_image(self.logo_path, width=100)
+            logo = self.load_image(self.logo_path, width=90)
             if logo:
-                st.image(logo, width=100)
+                st.image(logo, width=90)
         with col2:
-            st.title("🛡️ CyberThreatWatch")
-            user_name = st.session_state.get("user_name", "User")
-            st.markdown(f"Real-time Threat Intelligence Dashboard · Welcome, **{user_name}**!")
+            st.title("CyberThreatWatch Dashboard")
+            st.markdown(f"**Real-time Threat Intelligence Monitoring** — Welcome, *{st.session_state.get('user_name', 'User')}*")
         with col3:
-            if st.session_state.get("user_picture"):
-                st.image(st.session_state.user_picture, width=50)
-            else:
-                st.markdown(f"🔐 *Authenticated*")
-
+            sig = self.load_image(self.signature_path, width=100)
+            if sig:
+                st.image(sig, width=100)
         st.markdown("---")
 
-
-# --- Display User Info and Logout in Sidebar ---
-login_component.render_logout_section()
-
-# --- Sidebar Navigation ---
-st.sidebar.markdown("## 🧭 Navigation")
-page = st.sidebar.radio(
-    "Go to",
-    ["Dashboard", "Search", "Alerts", "Reports", "Threat Detection", "Settings"],
-    label_visibility="collapsed"
-)
-
-# Initialize main app
 app = CyberThreatWatch()
 app.render_header()
 
+# --- Sidebar Navigation ---
+login.render_logout_section()
+st.sidebar.markdown("## Navigation")
+page = st.sidebar.radio("Go to", ["Dashboard", "Alerts", "Reports", "Settings"], label_visibility="collapsed")
 
-# ----------------------------------------------------------------
-# 🧠 LOCAL SENSOR + REAL-TIME STREAM INTEGRATION
-# ----------------------------------------------------------------
-from dashboard.services.sensor import start_sensor, stop_sensor
-from dashboard.services.data_service import data_stream
-
-st.sidebar.subheader("🧠 Local Sensor")
-if st.sidebar.toggle("Enable Local Sensor"):
+# --- Sidebar Sensor + Refresh Control ---
+st.sidebar.subheader("🧠 Local Sensor Control")
+if st.sidebar.toggle("Enable Local Sensor", value=False):
     start_sensor()
 else:
     stop_sensor()
 
-# --- Real-time auto-update using Supabase + Streamlit rerun ---
-if "latest_alerts" not in st.session_state:
-    st.session_state["latest_alerts"] = []
+sensor_interval = st.sidebar.slider("Sensor Upload Interval (secs)", 30, 300, 60)
+refresh_rate = st.sidebar.slider("Dashboard Refresh Interval", 5, 60, 15)
 
-def update_dashboard(data):
-    """Update session state and show toast when new data arrives."""
-    old_count = len(st.session_state["latest_alerts"])
+st.sidebar.markdown("---")
+st.sidebar.write("Realtime Status:")
+if st.session_state.get("realtime_active"):
+    st.sidebar.success("🟢 Active")
+else:
+    st.sidebar.info("🔴 Idle")
+
+# --- Real-time wiring ---
+def update_dashboard_from_stream(data):
     st.session_state["latest_alerts"] = data
-    new_count = len(data)
-    if new_count > old_count:
-        st.toast(f"🚨 New alert received! ({new_count - old_count} new)")
     st.experimental_rerun()
 
-if not st.session_state.get("realtime_active"):
-    try:
-        data_stream.start_realtime()
-        data_stream.subscribe(update_dashboard)
-        st.session_state["realtime_active"] = True
-        st.sidebar.success("✅ Real-time data stream active")
-    except Exception as e:
-        st.sidebar.error(f"⚠️ Real-time stream error: {e}")
-# ----------------------------------------------------------------
+if not st.session_state["realtime_active"]:
+    data_stream.start_realtime(interval=refresh_rate)
+    data_stream.subscribe(update_dashboard_from_stream)
+    st.session_state["realtime_active"] = True
 
-
-# --- GeoIP cache ---
-@lru_cache(maxsize=5000)
+# --- Helper functions ---
+@lru_cache(maxsize=2000)
 def cached_ip_lookup(ip):
-    try:
-        return ip_to_location(ip)
-    except Exception as e:
-        logger.error(f"GeoIP lookup failed for {ip}: {e}")
-        return None
+    try: return ip_to_location(ip)
+    except: return None
 
+def high_threat_detected(alerts):
+    for a in alerts or []:
+        if isinstance(a, dict) and a.get("severity", "").lower() == "high":
+            return True
+    return False
 
-# --- Pages ---
+# --- Auto Refresh ---
+if time.time() - st.session_state["last_refresh"] > refresh_rate:
+    st.session_state["last_refresh"] = time.time()
+    st.experimental_rerun()
+
+# --- Main Pages ---
 if page == "Dashboard":
     st.subheader("📊 Dashboard Overview")
 
-    # --- Real-Time Refresh Every 10 Seconds ---
-    st.autorefresh(interval=10 * 1000, key="data_refresh")
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns([1.5, 1, 1])
     with col1:
         if st.button("🔄 Fetch OTX Threats", use_container_width=True):
-            if otx and supabase:
-                try:
-                    new_alerts = collect_otx_alerts(otx, supabase)
-                    st.success(f"Fetched {len(new_alerts) if new_alerts else 0} new alerts!")
-                except Exception as e:
-                    st.error(f"Failed to fetch OTX alerts: {e}")
-            else:
-                st.warning("OTX or Supabase not configured")
-
+            try:
+                new_alerts = collect_otx_alerts(otx, supabase)
+                st.success(f"Fetched {len(new_alerts)} new alerts!")
+            except Exception as e:
+                st.error(f"Fetch failed: {e}")
     with col2:
-        total_alerts = len(st.session_state.alerts_data)
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        total_alerts = len(st.session_state.get("latest_alerts", []))
         st.metric("Total Alerts", total_alerts)
-
+        st.markdown('</div>', unsafe_allow_html=True)
     with col3:
-        if st.button("Clear Cache", use_container_width=True):
-            cached_ip_lookup.cache_clear()
-            st.success("GeoIP cache cleared!")
-
-    # --- Display Alerts ---
-    if st.session_state.alerts_data:
-        df = pd.DataFrame(st.session_state.alerts_data)
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-
-        metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-        with metric_col1:
-            st.metric("High Severity", len(df[df["severity"] == "High"]) if "severity" in df.columns else 0)
-        with metric_col2:
-            st.metric("Unique IPs", df["source_ip"].nunique() if "source_ip" in df.columns else 0)
-        with metric_col3:
-            st.metric("Countries", df["country"].nunique() if "country" in df.columns else 0)
-        with metric_col4:
-            latest_alert = df["timestamp"].max() if "timestamp" in df.columns else "N/A"
-            st.metric("Latest Alert", latest_alert.strftime("%H:%M") if not isinstance(latest_alert, str) else latest_alert)
-
-        chart_col1, chart_col2 = st.columns(2)
-        with chart_col1:
-            if "severity" in df.columns and not df["severity"].empty:
-                sev_counts = df["severity"].value_counts().reset_index()
-                sev_counts.columns = ["severity", "count"]
-                fig_sev = px.bar(sev_counts, x="severity", y="count", title="Alerts by Severity", color="severity")
-                st.plotly_chart(fig_sev, use_container_width=True)
-        with chart_col2:
-            if "type" in df.columns and not df["type"].empty:
-                type_counts = df["type"].value_counts().head(10).reset_index()
-                type_counts.columns = ["type", "count"]
-                fig_type = px.pie(type_counts, names="type", values="count", title="Top Threat Types")
-                st.plotly_chart(fig_type, use_container_width=True)
-
-        chart_col3, chart_col4 = st.columns(2)
-        with chart_col3:
-            if "timestamp" in df.columns and not df["timestamp"].empty:
-                df_daily = df.set_index("timestamp").resample("H").size().reset_index()
-                df_daily.columns = ["timestamp", "count"]
-                fig_time = px.line(df_daily, x="timestamp", y="count", title="Alerts Over Time (Hourly)")
-                st.plotly_chart(fig_time, use_container_width=True)
-        with chart_col4:
-            if "source_ip" in df.columns and not df["source_ip"].empty:
-                top_ips = df["source_ip"].value_counts().head(10).reset_index()
-                top_ips.columns = ["source_ip", "count"]
-                fig_ips = px.bar(top_ips, x="source_ip", y="count", title="Top 10 Source IPs")
-                st.plotly_chart(fig_ips, use_container_width=True)
-
-        st.subheader("🌍 Global Threat Map")
-        geo_data = []
-        for ip in df["source_ip"].dropna().unique() if "source_ip" in df.columns else []:
-            loc = cached_ip_lookup(ip)
-            if loc and loc.get("lat") and loc.get("lon"):
-                geo_data.append(loc)
-
-        if geo_data:
-            geo_df = pd.DataFrame(geo_data)
-            map_fig = px.scatter_mapbox(
-                geo_df, lat="lat", lon="lon", hover_name="ip", hover_data=["country", "city"],
-                zoom=1, height=400, title="Threat Origins Worldwide"
-            )
-            map_fig.update_layout(mapbox_style="carto-positron", margin={"r": 0, "t": 30, "l": 0, "b": 0})
-            st.plotly_chart(map_fig, use_container_width=True)
+        if high_threat_detected(st.session_state.get("latest_alerts", [])):
+            st.markdown("""
+            <div style='text-align:center;'>
+                <div style='width:28px;height:28px;border-radius:50%;background:#ff4d4d;
+                    animation:pulse 1.5s infinite; margin:auto; box-shadow: 0 0 20px #ff4d4d88;'></div>
+            </div>
+            <style>@keyframes pulse{0%{box-shadow:0 0 4px #ff4d4d;}50%{box-shadow:0 0 28px #ff4d4d;}100%{box-shadow:0 0 4px #ff4d4d;}}</style>
+            """, unsafe_allow_html=True)
+            st.error("High-severity threat detected!")
         else:
-            st.info("No GeoIP data available for mapping.")
-    else:
-        st.info("No alert data available. Fetch threats from OTX or check your Supabase connection.")
+            st.success("System stable — no critical threats.")
 
-    if supabase:
-        try:
-            st.subheader("📡 Live Supabase Data")
-            response = supabase.table("alerts").select("*").limit(100).execute()
-            if response.data:
-                live_df = pd.DataFrame(response.data)
-                st.metric("Live Alerts in Database", len(live_df))
-                with st.expander("View Recent Alerts from Database"):
-                    st.dataframe(live_df.head(10), use_container_width=True)
-            else:
-                st.info("No alerts found in Supabase database.")
-        except Exception as e:
-            st.error(f"Error fetching Supabase data: {e}")
+    df = pd.DataFrame(st.session_state.get("latest_alerts", []))
+    if not df.empty:
+        st.dataframe(df.head(30), use_container_width=True)
+    else:
+        st.info("No alert data found. Waiting for sensor or Supabase feed...")
+
+elif page == "Alerts":
+    st.subheader("🔍 Detailed Alerts Feed")
+    df = pd.DataFrame(st.session_state.get("latest_alerts", []))
+    if not df.empty:
+        st.dataframe(df.sort_values("timestamp", ascending=False), use_container_width=True)
+    else:
+        st.info("No alerts available yet.")
 
 elif page == "Reports":
-    st.subheader("📝 Threat Intelligence Reports")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### 📊 Data Export")
-        df = pd.DataFrame(st.session_state.alerts_data or [])
-        st.download_button(
-            "⬇️ Download Alerts CSV",
-            df.to_csv(index=False),
-            file_name=f"threat_alerts_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-    with col2:
-        st.markdown("### 📄 PDF Report")
-        st.markdown("Generate comprehensive threat report")
+    st.subheader("🧾 Reports & Export")
+    df = pd.DataFrame(st.session_state.get("latest_alerts", []))
+    if not df.empty:
+        st.download_button("⬇️ Export CSV", df.to_csv(index=False), "alerts.csv")
+    else:
+        st.info("No alerts to export.")
 
-    st.markdown("---")
-    st.markdown("### 📋 Analyst Notes")
-    notes = st.text_area("Add your observations, insights, or next steps",
-                         placeholder="Document key findings, IoCs, and recommended actions...", height=150)
+elif page == "Settings":
+    st.subheader("⚙️ Settings")
+    st.write("Adjust system and sensor configurations here.")
+    st.write("Sensor interval:", sensor_interval, "seconds")
+    st.write("Dashboard refresh:", refresh_rate, "seconds")
 
-    if st.button("📄 Generate Comprehensive PDF Report", use_container_width=True):
-        with st.spinner("Generating PDF report..."):
-            try:
-                from dashboard.utils.report_generator import generate_report
-                pdf_path = generate_report(
-                    alerts=st.session_state.alerts_data,
-                    notes=notes,
-                    analyst_name=st.session_state.user_name,
-                    logo_path=app.logo_path,
-                    signature_path=app.signature_path
-                )
-                with open(pdf_path, "rb") as f:
-                    st.download_button(
-                        "⬇️ Download PDF Report",
-                        f,
-                        file_name=f"threat_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                        mime="application/pdf",
-                        use_container_width=True
-                    )
-            except Exception as e:
-                st.error(f"PDF generation failed: {e}")
-
-# Footer
+# --- Footer ---
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: gray;'>"
-    "CyberThreatWatch v1.0 • Real-time Threat Intelligence Dashboard"
-    "</div>", unsafe_allow_html=True
-)
+    "<div style='text-align:center;color:gray;font-size:13px;'>"
+    "CyberThreatWatch v1.0 • © 2025 Enemmoh Victor Okechukwu"
+    "</div>", unsafe_allow_html=True)
