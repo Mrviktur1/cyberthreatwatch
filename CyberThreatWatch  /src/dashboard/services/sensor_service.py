@@ -1,9 +1,8 @@
-# dashboard/services/sensor_service.py
 import streamlit as st
 import threading
 import time
 import logging
-from dashboard.services.sensor import send_logs_to_supabase
+from dashboard.services.sensor import send_logs_to_supabase, read_logs
 
 logger = logging.getLogger(__name__)
 
@@ -13,23 +12,30 @@ class SensorService:
     def __init__(self):
         self.thread = None
         self.running = False
-        self.interval = 60  # seconds between log uploads
+        self.interval = 60  # interval in seconds
+        self.last_run_time = None
+        self.last_logs = []
 
     def _sensor_loop(self):
-        """Background loop that continuously reads and uploads logs."""
+        """Continuously read logs and send to Supabase."""
         logger.info("🚀 Sensor loop started.")
         while self.running:
             try:
+                self.last_logs = read_logs()
                 send_logs_to_supabase()
+                self.last_run_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                logger.info(f"📡 Sensor sent logs at {self.last_run_time}")
             except Exception as e:
                 logger.error(f"Sensor loop error: {e}")
             time.sleep(self.interval)
+
         logger.info("🛑 Sensor loop stopped.")
 
     def start(self):
         """Start the background sensor thread."""
         if self.running:
             logger.warning("Sensor already running — skipping start.")
+            st.toast("⚙️ Sensor is already running.")
             return
 
         self.running = True
@@ -44,6 +50,7 @@ class SensorService:
         """Stop the background sensor thread."""
         if not self.running:
             logger.warning("Sensor already stopped.")
+            st.toast("⚠️ Sensor is already stopped.")
             return
 
         self.running = False
@@ -53,12 +60,18 @@ class SensorService:
 
     def status(self):
         """Return current status of the sensor."""
-        if self.running:
-            return "active"
-        return "stopped"
+        return "active" if self.running else "stopped"
+
+    def get_last_report(self):
+        """Return the last collected logs and timestamp."""
+        return {
+            "status": self.status(),
+            "last_run": self.last_run_time,
+            "last_logs": self.last_logs[-5:] if self.last_logs else ["No logs collected yet."],
+        }
 
 
-# Singleton pattern — so only one instance exists across Streamlit reruns
+# Singleton — one instance across Streamlit reruns
 @st.cache_resource
 def get_sensor_service():
     return SensorService()
