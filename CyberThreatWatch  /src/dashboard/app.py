@@ -8,7 +8,6 @@ from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
-from streamlit_autorefresh import st_autorefresh
 from functools import lru_cache
 from datetime import datetime, timedelta
 
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-
 # --- Supabase Client ---
 @st.cache_resource
 def init_supabase() -> Client:
@@ -37,7 +35,6 @@ def init_supabase() -> Client:
             url: str = st.secrets["SUPABASE_URL"]
             key: str = st.secrets["SUPABASE_KEY"]
 
-            # Test connection with a simple query
             client = create_client(url, key)
             try:
                 result = client.table("alerts").select("id", count="exact").limit(1).execute()
@@ -53,7 +50,6 @@ def init_supabase() -> Client:
 
 
 supabase = init_supabase()
-
 
 # --- OTX Client ---
 @st.cache_resource
@@ -90,9 +86,6 @@ if "threat_data" not in st.session_state:
 
 # --- Main Config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
-
-# Auto-refresh every 60s
-st_autorefresh(interval=60 * 1000, key="dashboard_autorefresh")
 
 # --- Initialize Login Component ---
 login_component = LoginComponent()
@@ -171,14 +164,23 @@ if st.sidebar.toggle("Enable Local Sensor"):
 else:
     stop_sensor()
 
-# Start realtime listener
-data_stream.start_realtime()
+# --- Real-time auto-update using Supabase + Streamlit rerun ---
+if "latest_alerts" not in st.session_state:
+    st.session_state["latest_alerts"] = []
 
 def update_dashboard(data):
+    """Update session state and rerun the dashboard when new data arrives."""
     st.session_state["latest_alerts"] = data
     st.experimental_rerun()
 
-data_stream.subscribe(update_dashboard)
+if not st.session_state.get("realtime_active"):
+    try:
+        data_stream.start_realtime()
+        data_stream.subscribe(update_dashboard)
+        st.session_state["realtime_active"] = True
+        st.sidebar.success("✅ Real-time data stream active")
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Real-time stream error: {e}")
 # ----------------------------------------------------------------
 
 
