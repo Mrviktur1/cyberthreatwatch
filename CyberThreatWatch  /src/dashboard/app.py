@@ -159,6 +159,29 @@ app = CyberThreatWatch()
 app.render_header()
 
 
+# ----------------------------------------------------------------
+# 🧠 LOCAL SENSOR + REAL-TIME STREAM INTEGRATION
+# ----------------------------------------------------------------
+from dashboard.services.sensor import start_sensor, stop_sensor
+from dashboard.services.data_service import data_stream
+
+st.sidebar.subheader("🧠 Local Sensor")
+if st.sidebar.toggle("Enable Local Sensor"):
+    start_sensor()
+else:
+    stop_sensor()
+
+# Start realtime listener
+data_stream.start_realtime()
+
+def update_dashboard(data):
+    st.session_state["latest_alerts"] = data
+    st.experimental_rerun()
+
+data_stream.subscribe(update_dashboard)
+# ----------------------------------------------------------------
+
+
 # --- GeoIP cache ---
 @lru_cache(maxsize=5000)
 def cached_ip_lookup(ip):
@@ -315,8 +338,6 @@ elif page == "Reports":
                     )
             except Exception as e:
                 st.error(f"PDF generation failed: {e}")
-
-# ⚠️ Skipping Threat Detection & Settings sections here for brevity (unchanged) ...
 
 # Footer
 st.markdown("---")
