@@ -1,24 +1,13 @@
 #!/usr/bin/env python3
 """
-cyberthreatwatch_agent_installer.py
+cyberthreatwatch_agent_installer.py (patched)
 
-Full CyberThreatWatch local agent (cross-platform) that tails/polls system logs
-and posts batches to your Supabase Edge Function ingest endpoint.
-
-Usage examples:
-    # test run (single insert)
-    CTW_EDGE_URL="https://.../ingest-logs" CTW_EDGE_SECRET="secret" python3 cyberthreatwatch_agent_installer.py --test
-
-    # foreground run
-    CTW_EDGE_URL="https://.../ingest-logs" CTW_EDGE_SECRET="secret" python3 cyberthreatwatch_agent_installer.py --interval 30
-
-    # detach (best-effort)
-    CTW_EDGE_URL="https://.../ingest-logs" CTW_EDGE_SECRET="secret" python3 cyberthreatwatch_agent_installer.py --detach --interval 60
-
-Notes:
- - The agent authenticates to the edge function with header `x-ctw-secret`.
- - The ingest endpoint must verify that header server-side.
- - The script writes a small status/pid/cache into the user's home folder.
+Improvements:
+ - Use SHA256 hash for dedupe keys.
+ - Exponential backoff (3 retries) on POST failures.
+ - --no-verify-tls to disable TLS verification (useful for self-signed testing).
+ - Cleaner shutdown: stop reader and save cache.
+ - Minor bugfixes and clearer env precedence.
 """
 
 import os
@@ -30,6 +19,7 @@ import logging
 import platform
 import subprocess
 import threading
+import hashlib
 from datetime import datetime, timezone
 from typing import List, Dict, Set, Optional
 
@@ -51,8 +41,10 @@ STATUS_FILE = os.path.join(AGENT_DIR, "agent.status.json")
 
 PRIORITY_KEYWORDS = ["attack", "unauthorized", "denied", "failed login", "ransomware", "malware", "critical", "panic"]
 
-# Logging
+# Ensure dir
 os.makedirs(AGENT_DIR, exist_ok=True)
+
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -207,8 +199,8 @@ class WindowsPoller:
 
 
 class CTWAgent:
-    def __init__(self, ingest_url: str, ingest_secret: str, interval: int = DEFAULT_INTERVAL, batch_size: int = DEFAULT_BATCH_SIZE):
-        self.ingest_url = ingest_url.rstrip("/")
+    def __init__(self, ingest_url: str, ingest_secret: str, interval: int = DEFAULT_INTERVAL, batch_size: int = DEFAULT_BATCH_SIZE, verify_tls: bool = True):
+        self.ingest_url = ingest_url.rstrip("/") if ingest_url else ingest_url
         self.ingest_secret = ingest_secret
         self.interval = max(1, interval)
         self.batch_size = max(1, batch_size)
@@ -217,6 +209,7 @@ class CTWAgent:
         self.reader = WindowsPoller() if "windows" in platform.system().lower() else UnixTailer()
         self.queue = []
         self.queue_lock = threading.Lock()
+        self.verify_tls = verify_tls
 
     def start(self) -> bool:
         if not self.ingest_url or not self.ingest_secret:
@@ -258,8 +251,10 @@ class CTWAgent:
     def _lines_to_records(self, lines: List[str]) -> List[Dict]:
         out = []
         for line in lines:
-            key = (line or "")[:800]
-            if key in self.sent_cache:
+            key_raw = (line or "")[:2000]
+            # compute sha256
+            key_hash = hashlib.sha256(key_raw.encode("utf-8")).hexdigest()
+            if key_hash in self.sent_cache:
                 continue
             severity = "critical" if any(kw in line.lower() for kw in PRIORITY_KEYWORDS) else "info"
             rec = {
@@ -268,7 +263,7 @@ class CTWAgent:
                 "message": line,
                 "severity": severity
             }
-            out.append({"rec": rec, "key": key})
+            out.append({"rec": rec, "key": key_hash})
         return out
 
     def _sender_loop(self):
@@ -296,19 +291,28 @@ class CTWAgent:
     def _post_to_ingest(self, records: List[Dict]) -> bool:
         if not records:
             return True
-        try:
-            headers = {"Content-Type": "application/json", "x-ctw-secret": self.ingest_secret}
-            payload = {"logs": records}
-            resp = requests.post(self.ingest_url, json=payload, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                logger.info(f"Uploaded {len(records)} record(s) to ingest endpoint.")
-                return True
-            else:
-                logger.warning(f"Ingest returned {resp.status_code}: {resp.text}")
-                return False
-        except Exception as e:
-            logger.error(f"Ingest POST error: {e}")
-            return False
+        # Exponential backoff: 3 retries
+        max_retries = 3
+        backoff_base = 1.5
+        for attempt in range(1, max_retries + 1):
+            try:
+                headers = {"Content-Type": "application/json", "x-ctw-secret": self.ingest_secret}
+                payload = {"logs": records}
+                resp = requests.post(self.ingest_url, json=payload, headers=headers, timeout=15, verify=self.verify_tls)
+                if resp.status_code == 200:
+                    logger.info(f"Uploaded {len(records)} record(s) to ingest endpoint.")
+                    return True
+                else:
+                    logger.warning(f"Ingest returned {resp.status_code}: {resp.text}")
+            except Exception as e:
+                logger.error(f"Ingest POST error (attempt {attempt}): {e}")
+            # backoff before next attempt
+            if attempt < max_retries:
+                to_sleep = (backoff_base ** attempt)
+                logger.info(f"Retrying in {to_sleep:.1f}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(to_sleep)
+        logger.error("All upload attempts failed for this batch.")
+        return False
 
     def _write_status(self, obj: Dict):
         try:
@@ -382,10 +386,11 @@ def parse_args():
     p.add_argument("--test", action="store_true", help="Run a test insert once")
     p.add_argument("--ingest-url", dest="ingest_url", type=str, default=None, help="Ingest endpoint URL (overrides env)")
     p.add_argument("--ingest-secret", dest="ingest_secret", type=str, default=None, help="Ingest secret (overrides env)")
+    p.add_argument("--no-verify-tls", dest="no_verify_tls", action="store_true", help="Skip TLS verification (unsafe; for testing only)")
     return p.parse_args()
 
 
-def test_insert(ingest_url: str, ingest_secret: str):
+def test_insert(ingest_url: str, ingest_secret: str, verify_tls: bool = True):
     if requests is None:
         logger.error("requests not installed.")
         return False
@@ -398,7 +403,7 @@ def test_insert(ingest_url: str, ingest_secret: str):
             "severity": "info"
         }
         payload = {"logs": [rec]}
-        r = requests.post(ingest_url, json=payload, headers=headers, timeout=10)
+        r = requests.post(ingest_url, json=payload, headers=headers, timeout=10, verify=verify_tls)
         logger.info(f"Test insert status: {r.status_code} {r.text}")
         return r.status_code == 200
     except Exception as e:
@@ -409,11 +414,11 @@ def test_insert(ingest_url: str, ingest_secret: str):
 def main():
     args = parse_args()
 
-    ingest_url = args.ingest_url or os.environ.get("CTW_EDGE_URL") or os.environ.get("CTW_INGEST_URL") or os.environ.get("CTW_EDGE_ENDPOINT") or os.environ.get("CTW_EDGE_URL")
-    ingest_secret = args.ingest_secret or os.environ.get("CTW_EDGE_SECRET") or os.environ.get("CTW_INGEST_SECRET") or os.environ.get("CTW_EDGE_SECRET")
+    ingest_url = args.ingest_url or os.environ.get("CTW_EDGE_URL") or os.environ.get("CTW_INGEST_URL") or os.environ.get("CTW_EDGE_ENDPOINT")
+    ingest_secret = args.ingest_secret or os.environ.get("CTW_EDGE_SECRET") or os.environ.get("CTW_INGEST_SECRET")
 
     if args.test:
-        ok = test_insert(ingest_url, ingest_secret)
+        ok = test_insert(ingest_url, ingest_secret, verify_tls=not args.no_verify_tls)
         if ok:
             logger.info("Test upload succeeded.")
         else:
@@ -430,7 +435,7 @@ def main():
 
     # Write pid file for foreground controller
     write_pid()
-    agent = CTWAgent(ingest_url=ingest_url, ingest_secret=ingest_secret, interval=args.interval, batch_size=args.batch)
+    agent = CTWAgent(ingest_url=ingest_url, ingest_secret=ingest_secret, interval=args.interval, batch_size=args.batch, verify_tls=not args.no_verify_tls)
     ok = agent.start()
     if not ok:
         logger.error("Agent failed to start (check ingest url/secret and requests installed)")
