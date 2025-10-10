@@ -1,9 +1,8 @@
 import streamlit as st
 import logging
-import hashlib
-from datetime import datetime, timedelta
 from supabase import Client
-import streamlit.components.v1 as components
+import hashlib
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -11,188 +10,107 @@ class LoginComponent:
     def __init__(self, supabase: Client):
         self.supabase = supabase
 
-    # ---------- MAIN AUTH HANDLER ----------
-    def render_auth_page(self):
-        st.title("🔐 CyberThreatWatch Account Portal")
-        st.markdown("Securely register or sign in to access your dashboard.")
-        tab1, tab2 = st.tabs(["🆕 Create Account", "🔑 Login"])
+    def hash_password(self, password: str) -> str:
+        return hashlib.sha256(password.encode()).hexdigest()
 
-        with tab1:
-            self._render_signup()
-        with tab2:
-            self._render_login()
+    def create_account(self, full_name, email, phone, address, account_type, username, business_or_school, password):
+        try:
+            # Supabase Auth: create user and send email verification link
+            auth_response = self.supabase.auth.sign_up({
+                "email": email,
+                "password": password,
+                "options": {
+                    "email_redirect_to": "https://cyberwatch.streamlit.app"
+                }
+            })
 
-    # ---------- SIGNUP ----------
-    def _render_signup(self):
-        st.subheader("Create an Account")
-
-        with st.form("signup_form", clear_on_submit=False):
-            name = st.text_input("Full Name")
-            username = st.text_input("Username (unique)")
-            email = st.text_input("Email Address")
-            phone = st.text_input("Phone Number")
-            account_type = st.selectbox("Account Type", ["Student", "Business"])
-            org_name = st.text_input("School Name" if account_type == "Student" else "Business Name")
-            password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            submitted = st.form_submit_button("🚀 Register")
-
-        # --- hCaptcha Integration (shown below form) ---
-        captcha_token = None
-        site_key = st.secrets.get("HCAPTCHA_SITE_KEY")
-
-        if site_key:
-            st.markdown("### 🧩 Human Verification")
-            components.html(f"""
-                <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
-                <div class="h-captcha" data-sitekey="{site_key}" data-callback="onSuccess"></div>
-                <script>
-                    function onSuccess(token) {{
-                        const msg = {{ isStreamlitMessage: true, type: "hcaptcha", token: token }};
-                        window.parent.postMessage(msg, "*");
-                    }}
-                </script>
-            """, height=150)
-
-            if "hcaptcha_token" not in st.session_state or not st.session_state["hcaptcha_token"]:
-                st.info("✅ Please complete the captcha before submitting.")
-            else:
-                captcha_token = st.session_state["hcaptcha_token"]
-
-        if submitted:
-            if not all([name, username, email, phone, org_name, password, confirm_password]):
-                st.warning("⚠️ Please complete all fields.")
+            if "error" in auth_response and auth_response["error"]:
+                st.error(f"Signup error: {auth_response['error']['message']}")
                 return
 
+            # Hash password for custom user table
+            hashed_pw = self.hash_password(password)
+
+            # Store full profile in your custom 'users' table
+            self.supabase.table("users").insert({
+                "full_name": full_name,
+                "email": email,
+                "phone": phone,
+                "address": address,
+                "account_type": account_type,
+                "username": username,
+                "business_or_school": business_or_school,
+                "password_hash": hashed_pw,
+                "created_at": datetime.utcnow().isoformat()
+            }).execute()
+
+            st.success("✅ Account created successfully! Please verify your email before logging in.")
+        except Exception as e:
+            logger.error(f"Signup error: {e}")
+            st.error("An unexpected error occurred during signup.")
+
+    def login_user(self, email_or_username, password):
+        try:
+            # Check login with Supabase Auth
+            response = self.supabase.auth.sign_in_with_password({
+                "email": email_or_username,
+                "password": password
+            })
+            if not response or "user" not in response:
+                st.error("Invalid login credentials.")
+                return False
+
+            st.session_state["authenticated"] = True
+            st.session_state["user_email"] = email_or_username
+            st.success("✅ Login successful!")
+            return True
+        except Exception as e:
+            logger.error(f"Login error: {e}")
+            st.error("Login failed. Please check your credentials or verify your email.")
+            return False
+
+    def render_signup(self):
+        st.subheader("🧾 Create Account")
+        full_name = st.text_input("Full Name")
+        email = st.text_input("Email")
+        phone = st.text_input("Phone Number")
+        address = st.text_input("Address")
+        account_type = st.selectbox("Account Type", ["Student", "Business"])
+        business_or_school = st.text_input("Business Name or School Name")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+
+        if st.button("Sign Up"):
+            if not all([full_name, email, phone, address, account_type, username, password, confirm_password]):
+                st.warning("Please fill out all fields.")
+                return
             if password != confirm_password:
                 st.error("Passwords do not match.")
                 return
+            self.create_account(full_name, email, phone, address, account_type, username, business_or_school, password)
 
-            if not self._validate_email(email):
-                st.error("Invalid email address.")
-                return
-
-            hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-
-            try:
-                # Step 1: Create user in Supabase Auth (with optional CAPTCHA)
-                payload = {
-                    "email": email,
-                    "password": password,
-                }
-
-                if captcha_token:
-                    payload["options"] = {"captcha_token": captcha_token}
-
-                auth_res = self.supabase.auth.sign_up(payload)
-
-                if not auth_res.user:
-                    st.error("Account creation failed. Try again.")
-                    return
-
-                user_id = auth_res.user.id
-
-                # Step 2: Store additional profile data in `users` table
-                self.supabase.table("users").insert(
-                    {
-                        "id": user_id,
-                        "name": name,
-                        "username": username,
-                        "email": email,
-                        "phone": phone,
-                        "account_type": account_type,
-                        "organization_name": org_name,
-                        "password_hash": hashed_pw,
-                        "created_at": datetime.now().isoformat(),
-                    }
-                ).execute()
-
-                st.success(
-                    "✅ Account created successfully! Please verify your email before logging in."
-                )
-
-            except Exception as e:
-                logger.error(f"Signup error: {e}")
-                if "captcha" in str(e).lower():
-                    st.error("⚠️ CAPTCHA verification failed. Please try again.")
-                else:
-                    st.error("An error occurred during signup. Please try again later.")
-
-    # ---------- LOGIN ----------
-    def _render_login(self):
-        st.subheader("Login to Your Account")
-
-        with st.form("login_form"):
-            login_input = st.text_input("Email or Username")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("🔓 Login")
-
-            if submitted:
-                if not login_input or not password:
-                    st.warning("Please enter both email/username and password.")
-                    return
-
-                try:
-                    # Determine if email or username
-                    if "@" in login_input:
-                        res = self.supabase.table("users").select("*").eq("email", login_input).execute()
-                    else:
-                        res = self.supabase.table("users").select("*").eq("username", login_input).execute()
-
-                    if not res.data:
-                        st.error("Account not found.")
-                        return
-
-                    user = res.data[0]
-                    hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-
-                    if hashed_pw != user.get("password_hash"):
-                        st.error("Incorrect password.")
-                        return
-
-                    # Verify email status via Supabase Auth
-                    try:
-                        auth_user = self.supabase.auth.sign_in_with_password(
-                            {"email": user["email"], "password": password}
-                        )
-                        if not auth_user.user:
-                            st.error("Please verify your email before logging in.")
-                            return
-                    except Exception:
-                        st.warning("Please verify your email before logging in.")
-                        return
-
-                    # Save session
-                    st.session_state.authenticated = True
-                    st.session_state.user_id = user["id"]
-                    st.session_state.user_email = user["email"]
-                    st.session_state.user_name = user["name"]
-                    st.session_state.account_type = user["account_type"]
-                    st.session_state.organization = user["organization_name"]
-                    st.session_state.session_expiry = datetime.now() + timedelta(hours=24)
-
-                    st.success(f"✅ Welcome back, {user['name']}!")
-                    st.experimental_rerun()
-
-                except Exception as e:
-                    logger.error(f"Login error: {e}")
-                    st.error("Login failed. Please try again.")
-
-    # ---------- LOGOUT ----------
-    def render_logout_section(self):
-        if st.sidebar.button("🚪 Logout", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                if key in ["authenticated", "user_id", "user_email", "user_name", "account_type", "organization", "session_expiry"]:
-                    del st.session_state[key]
-            st.success("👋 Logged out successfully.")
-            st.experimental_rerun()
-
-    # ---------- UTILITIES ----------
-    def _validate_email(self, email: str) -> bool:
-        return bool(email and "@" in email and "." in email and len(email) <= 254)
+    def render_login(self):
+        st.subheader("🔐 Login")
+        email_or_username = st.text_input("Email or Username")
+        password = st.text_input("Password", type="password")
+        if st.button("Login"):
+            self.login_user(email_or_username, password)
 
     def check_authentication(self):
-        """Check if user is authenticated; if not, show login/register."""
-        if not st.session_state.get("authenticated"):
-            self.render_auth_page()
-            st.stop()
+        if st.session_state.get("authenticated"):
+            st.success(f"Welcome back, {st.session_state.get('user_email', '')}")
+            return True
+
+        tabs = st.tabs(["Login", "Sign Up"])
+        with tabs[0]:
+            self.render_login()
+        with tabs[1]:
+            self.render_signup()
+        return False
+
+    def render_logout_section(self):
+        if st.session_state.get("authenticated"):
+            if st.button("🚪 Logout"):
+                st.session_state.clear()
+                st.experimental_rerun()
