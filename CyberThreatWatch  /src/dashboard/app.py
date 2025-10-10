@@ -35,7 +35,9 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# --- Supabase Client helper ---
+# =====================================================
+# Supabase Initialization
+# =====================================================
 @st.cache_resource
 def init_supabase() -> Client:
     try:
@@ -57,7 +59,9 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-# --- OTX client ---
+# =====================================================
+# OTX Client Initialization
+# =====================================================
 @st.cache_resource
 def init_otx():
     try:
@@ -70,10 +74,14 @@ def init_otx():
 
 otx = init_otx()
 
-# --- Page config ---
+# =====================================================
+# Streamlit Page Configuration
+# =====================================================
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
-# --- Theme ---
+# =====================================================
+# UI Theme
+# =====================================================
 st.markdown("""
 <style>
 :root { --accent1:#00A6FF; --accent2:#00D1B2; --glass: rgba(255,255,255,0.7); }
@@ -86,7 +94,9 @@ h1,h2,h3 { color:#013047; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Session defaults ---
+# =====================================================
+# Session Defaults
+# =====================================================
 defaults = {
     "alerts_data": [],
     "latest_alerts": [],
@@ -98,28 +108,30 @@ for key, value in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-# --- Authentication handler ---
+# =====================================================
+# Authentication
+# =====================================================
 login_component = LoginComponent(supabase=supabase)
 
-# Handle verification link (redirected from Supabase)
+# --- Handle verification redirect ---
 if "access_token" in st.query_params:
-    st.success("✅ Your email has been verified successfully! Redirecting to your dashboard...")
+    st.success("✅ Email verified successfully! Redirecting to your dashboard...")
     st.session_state.authenticated = True
+    time.sleep(3)
     st.rerun()
 
-# If user not authenticated, show login/signup page
-login_component.check_authentication()
-
-# If user session expired, log out automatically
+# --- Session expiry check ---
 if "session_expiry" in st.session_state:
     if datetime.now() > st.session_state.session_expiry:
-        st.warning("⚠️ Your session has expired. Please log in again.")
+        st.warning("⚠️ Session expired. Please log in again.")
         for key in ["authenticated", "user_id", "user_email", "user_name", "account_type", "organization", "session_expiry"]:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
 
-# --- Main Dashboard ---
+# =====================================================
+# Main Dashboard Class
+# =====================================================
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = os.path.join("assets", "CyberThreatWatch.png")
@@ -130,23 +142,21 @@ class CyberThreatWatch:
             logger.warning(f"AlertsPanel init error: {e}")
             self.alerts_panel = None
 
-    def load_image(self, path, width=None):
-        try:
-            if path and os.path.exists(path):
-                img = Image.open(path)
-                if width:
-                    img = img.resize((width, int(img.height * width / img.width)))
-                return img
-        except Exception as e:
-            logger.error(f"Image load error ({path}): {e}")
-        return None
+    def splash_screen(self):
+        """Show CyberThreatWatch splash for 4–5 seconds"""
+        if "splash_shown" not in st.session_state:
+            st.session_state.splash_shown = True
+            st.image(self.logo_path, width=160)
+            st.markdown("<h2 style='text-align:center;'>Welcome to CyberThreatWatch</h2>", unsafe_allow_html=True)
+            st.markdown("<p style='text-align:center;'>Securing your network in real-time...</p>", unsafe_allow_html=True)
+            time.sleep(4)
+            st.rerun()
 
     def render_header(self):
         col1, col2, col3 = st.columns([1, 3, 1])
         with col1:
-            logo = self.load_image(self.logo_path, width=96)
-            if logo:
-                st.image(logo, width=96)
+            if os.path.exists(self.logo_path):
+                st.image(self.logo_path, width=96)
             else:
                 st.markdown("### 🛡️")
         with col2:
@@ -192,10 +202,14 @@ class CyberThreatWatch:
             st.write(f"**Account Type:** {st.session_state.get('account_type')}")
             st.write(f"**Organization:** {st.session_state.get('organization')}")
 
-# --- Instantiate and render dashboard ---
-app = CyberThreatWatch()
-app.render_header()
-app.render_dashboard()
-
-# Logout section (sidebar)
-login_component.render_logout_section()
+# =====================================================
+# Entry Point
+# =====================================================
+if st.session_state.get("authenticated"):
+    app = CyberThreatWatch()
+    app.splash_screen()
+    app.render_header()
+    app.render_dashboard()
+    login_component.render_logout_section()
+else:
+    login_component.check_authentication()
