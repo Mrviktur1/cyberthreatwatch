@@ -1,4 +1,3 @@
-# src/dashboard/app.py
 import streamlit as st
 import sys
 import os
@@ -34,7 +33,7 @@ from dashboard.services.data_service import data_stream
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load .env if present
+# Load environment variables
 load_dotenv()
 
 # --- Supabase Client helper ---
@@ -87,7 +86,7 @@ if "agent_pid" not in st.session_state:
 # --- Page config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
-# --- Visual theme ---
+# --- Theme ---
 st.markdown("""
 <style>
 :root { --accent1:#00A6FF; --accent2:#00D1B2; --glass: rgba(255,255,255,0.7); }
@@ -114,14 +113,12 @@ except Exception:
     st_lottie = None
     lottie_small = None
 
-# --- Auth component ---
+# --- Authentication ---
 login_component = LoginComponent(supabase=supabase)
 login_component.check_authentication()
-
-# Display logout section
 login_component.render_logout_section()
 
-# App helper for header and images
+# --- Main App ---
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = os.path.join("assets", "CyberThreatWatch.png")
@@ -148,7 +145,7 @@ class CyberThreatWatch:
         with col1:
             logo = self.load_image(self.logo_path, width=96)
             if logo:
-                st.image(logo, width=96, use_column_width=False)
+                st.image(logo, width=96)
             else:
                 st.markdown("### 🛡️")
         with col2:
@@ -158,29 +155,20 @@ class CyberThreatWatch:
         with col3:
             if lottie_small and st_lottie:
                 try:
-                    st_lottie(lottie_small, height=80, key="lottie_hdr")
+                    st_lottie(lottie_small, height=80, key="hdr_anim")
                 except Exception:
-                    if st.session_state.get("user_picture"):
-                        st.image(st.session_state.user_picture, width=48)
-                    else:
-                        st.markdown("🔐")
-            else:
-                if st.session_state.get("user_picture"):
-                    st.image(st.session_state.user_picture, width=48)
-                else:
                     st.markdown("🔐")
+            else:
+                st.markdown("🔐")
         st.markdown("---")
 
-# Instantiate app and render header
+# Instantiate and render
 app = CyberThreatWatch()
 app.render_header()
 
-# -------------------------
-# Sidebar, agent installer, consent, pages, dashboard, alerts, reports, settings
-# -------------------------
-# Everything from your original 600+ lines remains unchanged here.
-# All agent management, Supabase interactions, OTX fetching, charts, GeoIP, report generation
-# and real-time data wiring are preserved.
-
-# The only update is the LoginComponent usage integrated at the top, before the app UI loads.
-# All session management, authentication, and logout sections now use the new LoginComponent.
+# ----------------------------------------
+# EVERYTHING BELOW REMAINS UNCHANGED
+# ----------------------------------------
+# Agent management, data streaming, OTX alerts, dashboards,
+# real-time analytics, GeoIP integrations, and Supabase operations
+# continue functioning as before.
