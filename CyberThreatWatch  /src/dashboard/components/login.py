@@ -3,6 +3,7 @@ import logging
 import hashlib
 from datetime import datetime, timedelta
 from supabase import Client
+import streamlit.components.v1 as components
 
 logger = logging.getLogger(__name__)
 
@@ -34,61 +35,87 @@ class LoginComponent:
             org_name = st.text_input("School Name" if account_type == "Student" else "Business Name")
             password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
-
             submitted = st.form_submit_button("🚀 Register")
 
-            if submitted:
-                if not all([name, username, email, phone, org_name, password, confirm_password]):
-                    st.warning("⚠️ Please complete all fields.")
+        # --- hCaptcha Integration (shown below form) ---
+        captcha_token = None
+        site_key = st.secrets.get("HCAPTCHA_SITE_KEY")
+
+        if site_key:
+            st.markdown("### 🧩 Human Verification")
+            components.html(f"""
+                <script src="https://js.hcaptcha.com/1/api.js" async defer></script>
+                <div class="h-captcha" data-sitekey="{site_key}" data-callback="onSuccess"></div>
+                <script>
+                    function onSuccess(token) {{
+                        const msg = {{ isStreamlitMessage: true, type: "hcaptcha", token: token }};
+                        window.parent.postMessage(msg, "*");
+                    }}
+                </script>
+            """, height=150)
+
+            if "hcaptcha_token" not in st.session_state or not st.session_state["hcaptcha_token"]:
+                st.info("✅ Please complete the captcha before submitting.")
+            else:
+                captcha_token = st.session_state["hcaptcha_token"]
+
+        if submitted:
+            if not all([name, username, email, phone, org_name, password, confirm_password]):
+                st.warning("⚠️ Please complete all fields.")
+                return
+
+            if password != confirm_password:
+                st.error("Passwords do not match.")
+                return
+
+            if not self._validate_email(email):
+                st.error("Invalid email address.")
+                return
+
+            hashed_pw = hashlib.sha256(password.encode()).hexdigest()
+
+            try:
+                # Step 1: Create user in Supabase Auth (with optional CAPTCHA)
+                payload = {
+                    "email": email,
+                    "password": password,
+                }
+
+                if captcha_token:
+                    payload["options"] = {"captcha_token": captcha_token}
+
+                auth_res = self.supabase.auth.sign_up(payload)
+
+                if not auth_res.user:
+                    st.error("Account creation failed. Try again.")
                     return
 
-                if password != confirm_password:
-                    st.error("Passwords do not match.")
-                    return
+                user_id = auth_res.user.id
 
-                if not self._validate_email(email):
-                    st.error("Invalid email address.")
-                    return
+                # Step 2: Store additional profile data in `users` table
+                self.supabase.table("users").insert(
+                    {
+                        "id": user_id,
+                        "name": name,
+                        "username": username,
+                        "email": email,
+                        "phone": phone,
+                        "account_type": account_type,
+                        "organization_name": org_name,
+                        "password_hash": hashed_pw,
+                        "created_at": datetime.now().isoformat(),
+                    }
+                ).execute()
 
-                hashed_pw = hashlib.sha256(password.encode()).hexdigest()
+                st.success(
+                    "✅ Account created successfully! Please verify your email before logging in."
+                )
 
-                try:
-                    # Step 1: Create user in Supabase Auth
-                    auth_res = self.supabase.auth.sign_up(
-                        {
-                            "email": email,
-                            "password": password,
-                            "options": {"email_redirect_to": "https://cyberwatch.streamlit.app"},
-                        }
-                    )
-
-                    if not auth_res.user:
-                        st.error("Account creation failed. Try again.")
-                        return
-
-                    user_id = auth_res.user.id
-
-                    # Step 2: Store additional user details in Supabase `users` table
-                    self.supabase.table("users").insert(
-                        {
-                            "id": user_id,
-                            "name": name,
-                            "username": username,
-                            "email": email,
-                            "phone": phone,
-                            "account_type": account_type,
-                            "organization_name": org_name,
-                            "password_hash": hashed_pw,
-                            "created_at": datetime.now().isoformat(),
-                        }
-                    ).execute()
-
-                    st.success(
-                        "✅ Account created successfully! Please verify your email before logging in."
-                    )
-
-                except Exception as e:
-                    logger.error(f"Signup error: {e}")
+            except Exception as e:
+                logger.error(f"Signup error: {e}")
+                if "captcha" in str(e).lower():
+                    st.error("⚠️ CAPTCHA verification failed. Please try again.")
+                else:
                     st.error("An error occurred during signup. Please try again later.")
 
     # ---------- LOGIN ----------
@@ -123,7 +150,7 @@ class LoginComponent:
                         st.error("Incorrect password.")
                         return
 
-                    # Check Supabase email verification and login
+                    # Verify email status via Supabase Auth
                     try:
                         auth_user = self.supabase.auth.sign_in_with_password(
                             {"email": user["email"], "password": password}
@@ -155,10 +182,7 @@ class LoginComponent:
     def render_logout_section(self):
         if st.sidebar.button("🚪 Logout", use_container_width=True):
             for key in list(st.session_state.keys()):
-                if key in [
-                    "authenticated", "user_id", "user_email",
-                    "user_name", "account_type", "organization", "session_expiry"
-                ]:
+                if key in ["authenticated", "user_id", "user_email", "user_name", "account_type", "organization", "session_expiry"]:
                     del st.session_state[key]
             st.success("👋 Logged out successfully.")
             st.experimental_rerun()
