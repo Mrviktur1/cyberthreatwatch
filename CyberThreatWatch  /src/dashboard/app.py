@@ -10,7 +10,6 @@ from OTXv2 import OTXv2
 from dotenv import load_dotenv
 import logging
 from PIL import Image
-from functools import lru_cache
 from datetime import datetime, timedelta
 import time
 import json
@@ -71,18 +70,6 @@ def init_otx():
 
 otx = init_otx()
 
-# --- Session defaults ---
-if "alerts_data" not in st.session_state:
-    st.session_state.alerts_data = []
-if "latest_alerts" not in st.session_state:
-    st.session_state.latest_alerts = []
-if "realtime_active" not in st.session_state:
-    st.session_state.realtime_active = False
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = time.time()
-if "agent_pid" not in st.session_state:
-    st.session_state.agent_pid = None
-
 # --- Page config ---
 st.set_page_config(page_title="CyberThreatWatch", layout="wide", page_icon="🛡️")
 
@@ -99,26 +86,40 @@ h1,h2,h3 { color:#013047; }
 </style>
 """, unsafe_allow_html=True)
 
-# Optional header animation
-try:
-    from streamlit_lottie import st_lottie
-    import requests
-    def load_lottie(url):
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            return r.json()
-        return None
-    lottie_small = load_lottie("https://assets8.lottiefiles.com/packages/lf20_vf2twv.json")
-except Exception:
-    st_lottie = None
-    lottie_small = None
+# --- Session defaults ---
+defaults = {
+    "alerts_data": [],
+    "latest_alerts": [],
+    "realtime_active": False,
+    "last_refresh": time.time(),
+    "agent_pid": None,
+}
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
-# --- Authentication ---
+# --- Authentication handler ---
 login_component = LoginComponent(supabase=supabase)
-login_component.check_authentication()
-login_component.render_logout_section()
 
-# --- Main App ---
+# Handle verification link (redirected from Supabase)
+if "access_token" in st.query_params:
+    st.success("✅ Your email has been verified successfully! Redirecting to your dashboard...")
+    st.session_state.authenticated = True
+    st.rerun()
+
+# If user not authenticated, show login/signup page
+login_component.check_authentication()
+
+# If user session expired, log out automatically
+if "session_expiry" in st.session_state:
+    if datetime.now() > st.session_state.session_expiry:
+        st.warning("⚠️ Your session has expired. Please log in again.")
+        for key in ["authenticated", "user_id", "user_email", "user_name", "account_type", "organization", "session_expiry"]:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.rerun()
+
+# --- Main Dashboard ---
 class CyberThreatWatch:
     def __init__(self):
         self.logo_path = os.path.join("assets", "CyberThreatWatch.png")
@@ -153,22 +154,48 @@ class CyberThreatWatch:
             user_name = st.session_state.get("user_name", "Analyst")
             st.markdown(f"Real-time Threat Intelligence · Welcome, **{user_name}**")
         with col3:
-            if lottie_small and st_lottie:
-                try:
-                    st_lottie(lottie_small, height=80, key="hdr_anim")
-                except Exception:
-                    st.markdown("🔐")
-            else:
-                st.markdown("🔐")
+            st.markdown("🔐")
         st.markdown("---")
 
-# Instantiate and render
+    def render_dashboard(self):
+        st.sidebar.header("🧭 Navigation")
+        options = ["Dashboard", "Active Alerts", "Sensor", "Account Settings"]
+        choice = st.sidebar.radio("Select View", options)
+
+        if choice == "Dashboard":
+            st.subheader("📊 Threat Overview")
+            st.write("Monitoring ongoing threats and system integrity in real time...")
+
+        elif choice == "Active Alerts":
+            if self.alerts_panel:
+                self.alerts_panel.render()
+            else:
+                st.error("⚠️ Alert panel could not be loaded.")
+
+        elif choice == "Sensor":
+            st.subheader("🛰️ Network Sensor Control")
+            if not st.session_state.realtime_active:
+                if st.button("▶️ Start Monitoring"):
+                    start_sensor()
+                    st.session_state.realtime_active = True
+                    st.success("✅ Monitoring started.")
+            else:
+                if st.button("⏹ Stop Monitoring"):
+                    stop_sensor()
+                    st.session_state.realtime_active = False
+                    st.info("🛑 Monitoring stopped.")
+
+        elif choice == "Account Settings":
+            st.subheader("⚙️ Account Information")
+            st.write(f"**Name:** {st.session_state.get('user_name')}")
+            st.write(f"**Email:** {st.session_state.get('user_email')}")
+            st.write(f"**Account Type:** {st.session_state.get('account_type')}")
+            st.write(f"**Organization:** {st.session_state.get('organization')}")
+
+# --- Instantiate and render dashboard ---
 app = CyberThreatWatch()
 app.render_header()
+app.render_dashboard()
 
-# ----------------------------------------
-# EVERYTHING BELOW REMAINS UNCHANGED
-# ----------------------------------------
-# Agent management, data streaming, OTX alerts, dashboards,
-# real-time analytics, GeoIP integrations, and Supabase operations
-# continue functioning as before.
+# Logout section (sidebar)
+login_component.render_logout_section()
