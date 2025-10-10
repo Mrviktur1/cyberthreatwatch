@@ -2,7 +2,7 @@ import streamlit as st
 import logging
 import hashlib
 from datetime import datetime, timedelta
-from supabase import Client
+from supabase import Client, create_client
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +63,9 @@ class LoginComponent:
                         "password": password,
                     })
 
-                    # Defensive auth error handling (supports different client return shapes)
-                    auth_error = None
-                    if hasattr(auth_res, "error"):
-                        auth_error = getattr(auth_res, "error")
-                    elif isinstance(auth_res, dict):
+                    # Defensive auth error handling
+                    auth_error = getattr(auth_res, "error", None)
+                    if not auth_error and isinstance(auth_res, dict):
                         auth_error = auth_res.get("error")
 
                     if auth_error:
@@ -76,22 +74,22 @@ class LoginComponent:
                         return
 
                     # Extract user id robustly
-                    user_obj = None
-                    if hasattr(auth_res, "user"):
-                        user_obj = getattr(auth_res, "user")
-                    elif isinstance(auth_res, dict):
+                    user_obj = getattr(auth_res, "user", None)
+                    if not user_obj and isinstance(auth_res, dict):
                         user_obj = auth_res.get("user")
 
-                    if not user_obj or not getattr(user_obj, "id", None) and not (isinstance(user_obj, dict) and user_obj.get("id")):
+                    if not user_obj:
                         st.error("❌ Account creation failed. Please try again.")
                         return
 
-                    user_id = user_obj.id if hasattr(user_obj, "id") else user_obj.get("id")
+                    user_id = getattr(user_obj, "id", None) or (isinstance(user_obj, dict) and user_obj.get("id"))
+                    if not user_id:
+                        st.error("❌ Missing user ID from signup response.")
+                        return
 
-                    # Step 2: Insert into public.users table
                     payload = {
                         "id": user_id,
-                        "full_name": full_name,     # use full_name consistently
+                        "full_name": full_name,
                         "username": username,
                         "email": email,
                         "phone": phone,
@@ -100,33 +98,32 @@ class LoginComponent:
                         "password_hash": hashed_pw,
                     }
 
-                    insert_res = self.supabase.table("users").insert(payload).execute()
+                    # Step 2: Use authenticated session token to insert into users table
+                    try:
+                        session = self.supabase.auth.get_session()
+                        access_token = None
 
-                    # Defensive DB error handling
-                    db_error = None
-                    db_data = None
-                    if hasattr(insert_res, "error"):
-                        db_error = getattr(insert_res, "error")
-                        db_data = getattr(insert_res, "data", None)
-                    elif isinstance(insert_res, dict):
-                        db_error = insert_res.get("error")
-                        db_data = insert_res.get("data")
+                        if session and hasattr(session, "access_token"):
+                            access_token = session.access_token
+                        elif isinstance(session, dict):
+                            access_token = session.get("access_token")
 
-                    if db_error:
-                        logger.error(f"DB insert error: {db_error}")
-                        # Handle common constraint violations (e.g., username/email unique)
-                        msg = db_error.get("message", "Database error")
-                        st.error(f"Signup failed: {msg}")
-                        return
+                        if not access_token:
+                            st.warning("⚠️ Could not verify session — please check your email to confirm your account.")
+                            return
 
-                    # Optionally confirm the row was created
-                    if not db_data:
-                        logger.warning("Insert returned no data; verify row existence in DB.")
-                        st.info("Account created in Auth; profile insertion may be pending. Please check your account.")
+                        user_supabase = create_client(
+                            self.supabase.supabase_url,
+                            self.supabase.supabase_key,
+                            options={"headers": {"Authorization": f"Bearer {access_token}"}}
+                        )
+
+                        insert_res = user_supabase.table("users").insert(payload).execute()
                         st.success("✅ Account created successfully! Please verify your email before logging in.")
-                        return
 
-                    st.success("✅ Account created successfully! Please verify your email before logging in.")
+                    except Exception as insert_error:
+                        logger.exception(f"Profile insert failed: {insert_error}")
+                        st.warning("✅ Account created in Auth — please verify your email before logging in.")
 
                 except Exception as e:
                     logger.exception(f"Signup error: {e}")
@@ -153,19 +150,9 @@ class LoginComponent:
                     else:
                         res = self.supabase.table("users").select("*").eq("username", login_input).execute()
 
-                    res_data = None
-                    res_error = None
-                    if hasattr(res, "data"):
-                        res_data = getattr(res, "data")
-                        res_error = getattr(res, "error", None)
-                    elif isinstance(res, dict):
+                    res_data = getattr(res, "data", None)
+                    if not res_data and isinstance(res, dict):
                         res_data = res.get("data")
-                        res_error = res.get("error")
-
-                    if res_error:
-                        logger.error(f"DB lookup error: {res_error}")
-                        st.error("An error occurred while looking up the account. Please try again.")
-                        return
 
                     if not res_data:
                         st.error("Account not found.")
@@ -184,12 +171,7 @@ class LoginComponent:
                             "email": user["email"],
                             "password": password,
                         })
-                        # handle different return shapes
                         if hasattr(auth_user, "error") and getattr(auth_user, "error"):
-                            logger.warning(f"Auth signin returned error: {auth_user.error}")
-                            st.warning("Please verify your email before logging in.")
-                            return
-                        if not auth_user or not getattr(auth_user, "user", None) and not (isinstance(auth_user, dict) and auth_user.get("user")):
                             st.warning("Please verify your email before logging in.")
                             return
                     except Exception as e:
@@ -201,7 +183,7 @@ class LoginComponent:
                     st.session_state.authenticated = True
                     st.session_state.user_id = user["id"]
                     st.session_state.user_email = user["email"]
-                    st.session_state.user_name = user.get("full_name") or user.get("name") or user.get("username")
+                    st.session_state.user_name = user.get("full_name") or user.get("username")
                     st.session_state.account_type = user.get("account_type")
                     st.session_state.organization = user.get("organization_name")
                     st.session_state.session_expiry = datetime.now() + timedelta(hours=24)
