@@ -26,7 +26,7 @@ class LoginComponent:
         st.subheader("Create an Account")
 
         with st.form("signup_form", clear_on_submit=False):
-            name = st.text_input("Full Name", key="signup_name")
+            full_name = st.text_input("Full Name", key="signup_full_name")
             username = st.text_input("Username (unique)", key="signup_username")
             email = st.text_input("Email Address", key="signup_email")
             phone = st.text_input("Phone Number", key="signup_phone")
@@ -41,51 +41,64 @@ class LoginComponent:
             submitted = st.form_submit_button("🚀 Register")
 
             if submitted:
-                if not all([name, username, email, phone, org_name, password, confirm_password]):
+                # Validation
+                if not all([full_name, username, email, phone, org_name, password, confirm_password]):
                     st.warning("⚠️ Please complete all fields.")
                     return
 
                 if password != confirm_password:
-                    st.error("Passwords do not match.")
+                    st.error("❌ Passwords do not match.")
                     return
 
                 if not self._validate_email(email):
-                    st.error("Invalid email address.")
+                    st.error("❌ Invalid email address.")
                     return
 
                 hashed_pw = hashlib.sha256(password.encode()).hexdigest()
 
                 try:
-                    # Step 1: Create user in Supabase Auth (email verification)
+                    # Step 1: Create user in Supabase Auth
                     auth_res = self.supabase.auth.sign_up({
                         "email": email,
                         "password": password,
                     })
 
+                    # Handle auth errors
+                    if getattr(auth_res, "error", None):
+                        logger.error(f"Auth signup error: {auth_res.error}")
+                        st.error(f"Auth signup failed: {auth_res.error.get('message', 'Please try again')}")
+                        return
+
                     if not auth_res or not getattr(auth_res, "user", None):
-                        st.error("Account creation failed. Please try again.")
+                        st.error("❌ Account creation failed. Please try again.")
                         return
 
                     user_id = auth_res.user.id
 
-                    # Step 2: Store additional profile data
-                    self.supabase.table("users").insert({
+                    # Step 2: Insert into public.users table
+                    payload = {
                         "id": user_id,
-                        "name": name,
+                        "full_name": full_name,     # ✅ use full_name instead of name
                         "username": username,
                         "email": email,
                         "phone": phone,
                         "account_type": account_type,
                         "organization_name": org_name,
                         "password_hash": hashed_pw,
-                        "created_at": datetime.now().isoformat(),
-                    }).execute()
+                    }
+
+                    insert_res = self.supabase.table("users").insert(payload).execute()
+
+                    if getattr(insert_res, "error", None):
+                        logger.error(f"DB insert error: {insert_res.error}")
+                        st.error(f"Signup failed: {insert_res.error.get('message', 'Database error')}")
+                        return
 
                     st.success("✅ Account created successfully! Please verify your email before logging in.")
 
                 except Exception as e:
                     logger.error(f"Signup error: {e}")
-                    st.error("An error occurred during signup. Please try again later.")
+                    st.error("⚠️ An error occurred during signup. Please try again later.")
 
     # ---------- LOGIN ----------
     def _render_login(self):
@@ -136,12 +149,12 @@ class LoginComponent:
                     st.session_state.authenticated = True
                     st.session_state.user_id = user["id"]
                     st.session_state.user_email = user["email"]
-                    st.session_state.user_name = user["name"]
+                    st.session_state.user_name = user["full_name"]
                     st.session_state.account_type = user["account_type"]
                     st.session_state.organization = user["organization_name"]
                     st.session_state.session_expiry = datetime.now() + timedelta(hours=24)
 
-                    st.success(f"✅ Welcome back, {user['name']}!")
+                    st.success(f"✅ Welcome back, {user['full_name']}!")
                     st.experimental_rerun()
 
                 except Exception as e:
