@@ -1,22 +1,51 @@
 import streamlit as st
 import logging
 import hashlib
+import time
 from datetime import datetime, timedelta
 from supabase import Client, create_client
 
 logger = logging.getLogger(__name__)
 
+# ======================================================
+# EMAIL VERIFICATION HANDLER (runs when link clicked)
+# ======================================================
+def handle_email_verification():
+    """Handle Supabase email verification redirect."""
+    query_params = st.query_params
+    if "access_token" in query_params:
+        st.markdown("<style>div.block-container {text-align:center;}</style>", unsafe_allow_html=True)
+
+        st.success("✅ Email verified successfully!")
+
+        st.image("assets/CyberThreatWatch.png", width=180)
+        st.markdown("<h2 style='color:#013047;'>Welcome to <b>CyberThreatWatch</b></h2>", unsafe_allow_html=True)
+        st.markdown(
+            "Your account has been verified successfully.<br>Redirecting to your dashboard...",
+            unsafe_allow_html=True,
+        )
+
+        # Loading animation for 4–5 seconds
+        progress_text = "Loading your secure dashboard..."
+        progress_bar = st.progress(0)
+        for percent_complete in range(100):
+            time.sleep(0.04)  # ~4 seconds
+            progress_bar.progress(percent_complete + 1, text=progress_text)
+
+        st.session_state.authenticated = True
+        st.switch_page("dashboard.py")  # Redirect to dashboard page
+
+
+# ======================================================
+# MAIN LOGIN COMPONENT
+# ======================================================
 class LoginComponent:
     def __init__(self, supabase: Client):
         self.supabase = supabase
 
-    # ---------- MAIN AUTH HANDLER ----------
+    # ---------- AUTH HANDLER ----------
     def render_auth_page(self):
-        # Handle verification callback from Supabase
-        if "access_token" in st.query_params:
-            st.success("✅ Email verified successfully! Redirecting to your dashboard...")
-            st.session_state.authenticated = True
-            st.experimental_rerun()
+        handle_email_verification()
 
         st.title("🔐 CyberThreatWatch Account Portal")
         st.markdown("Securely register or sign in to access your dashboard.")
@@ -47,15 +76,12 @@ class LoginComponent:
             submitted = st.form_submit_button("🚀 Register")
 
             if submitted:
-                # Validation
                 if not all([full_name, username, email, phone, org_name, password, confirm_password]):
                     st.warning("⚠️ Please complete all fields.")
                     return
-
                 if password != confirm_password:
                     st.error("❌ Passwords do not match.")
                     return
-
                 if not self._validate_email(email):
                     st.error("❌ Invalid email address.")
                     return
@@ -69,16 +95,15 @@ class LoginComponent:
                         "password": password,
                     })
 
-                    # Handle Supabase signup errors
                     auth_error = getattr(auth_res, "error", None)
                     if not auth_error and isinstance(auth_res, dict):
                         auth_error = auth_res.get("error")
 
                     if auth_error:
-                        logger.error(f"Auth signup error: {auth_error}")
                         st.error(f"Auth signup failed: {auth_error.get('message', 'Please try again')}")
                         return
 
+                    # Extract user object safely
                     user_obj = getattr(auth_res, "user", None)
                     if not user_obj and isinstance(auth_res, dict):
                         user_obj = auth_res.get("user")
@@ -92,6 +117,29 @@ class LoginComponent:
                         st.error("❌ Missing user ID from signup response.")
                         return
 
+                    # Step 2: Store profile in users table
+                    session = self.supabase.auth.get_session()
+                    access_token = None
+
+                    if session and hasattr(session, "access_token"):
+                        access_token = session.access_token
+                    elif isinstance(session, dict):
+                        access_token = session.get("access_token")
+
+                    if not access_token:
+                        st.info(
+                            "✅ Account created successfully! Please check your email to verify your account. "
+                            "You’ll be able to log in after verification."
+                        )
+                        return
+
+                    # Authenticated insert
+                    user_supabase = create_client(
+                        self.supabase.supabase_url,
+                        self.supabase.supabase_key,
+                        options={"headers": {"Authorization": f"Bearer {access_token}"}}
+                    )
+
                     payload = {
                         "id": user_id,
                         "full_name": full_name,
@@ -103,39 +151,8 @@ class LoginComponent:
                         "password_hash": hashed_pw,
                     }
 
-                    try:
-                        session = self.supabase.auth.get_session()
-                        access_token = None
-
-                        if session and hasattr(session, "access_token"):
-                            access_token = session.access_token
-                        elif isinstance(session, dict):
-                            access_token = session.get("access_token")
-
-                        if not access_token:
-                            st.info("""
-                            📧 **Almost done!**  
-                            We’ve sent a verification link to your email.  
-                            Please check your inbox and click the link to activate your account.  
-                            Once verified, you’ll be redirected to your dashboard automatically.
-                            """)
-                            return
-
-                        user_supabase = create_client(
-                            self.supabase.supabase_url,
-                            self.supabase.supabase_key,
-                            options={"headers": {"Authorization": f"Bearer {access_token}"}}
-                        )
-
-                        user_supabase.table("users").insert(payload).execute()
-                        st.success("✅ Account created successfully! Please verify your email before logging in.")
-
-                    except Exception as insert_error:
-                        logger.exception(f"Profile insert failed: {insert_error}")
-                        st.info("""
-                        ✅ Account created in Auth.  
-                        Please verify your email to complete registration and access your dashboard.
-                        """)
+                    insert_res = user_supabase.table("users").insert(payload).execute()
+                    st.success("✅ Account created successfully! Please verify your email before logging in.")
 
                 except Exception as e:
                     logger.exception(f"Signup error: {e}")
@@ -156,7 +173,7 @@ class LoginComponent:
                     return
 
                 try:
-                    # Determine if input is email or username
+                    # Check if email or username
                     if "@" in login_input:
                         res = self.supabase.table("users").select("*").eq("email", login_input).execute()
                     else:
@@ -167,14 +184,14 @@ class LoginComponent:
                         res_data = res.get("data")
 
                     if not res_data:
-                        st.error("❌ Account not found.")
+                        st.error("Account not found.")
                         return
 
                     user = res_data[0]
                     hashed_pw = hashlib.sha256(password.encode()).hexdigest()
 
                     if hashed_pw != user.get("password_hash"):
-                        st.error("❌ Incorrect password.")
+                        st.error("Incorrect password.")
                         return
 
                     # Verify via Supabase Auth
@@ -184,11 +201,11 @@ class LoginComponent:
                             "password": password,
                         })
                         if hasattr(auth_user, "error") and getattr(auth_user, "error"):
-                            st.warning("📩 Please verify your email before logging in.")
+                            st.warning("Please verify your email before logging in.")
                             return
                     except Exception as e:
                         logger.warning(f"Auth signin exception: {e}")
-                        st.warning("📩 Please verify your email before logging in.")
+                        st.warning("Please verify your email before logging in.")
                         return
 
                     # Save session data
@@ -200,12 +217,15 @@ class LoginComponent:
                     st.session_state.organization = user.get("organization_name")
                     st.session_state.session_expiry = datetime.now() + timedelta(hours=24)
 
+                    # Show animation + redirect
                     st.success(f"✅ Welcome back, {st.session_state.user_name}!")
-                    st.rerun()
+                    with st.spinner("Redirecting to your dashboard..."):
+                        time.sleep(2)
+                    st.switch_page("dashboard.py")
 
                 except Exception as e:
                     logger.exception(f"Login error: {e}")
-                    st.error("❌ Login failed. Please try again later.")
+                    st.error("Login failed. Please try again later.")
 
     # ---------- LOGOUT ----------
     def render_logout_section(self):
@@ -217,7 +237,7 @@ class LoginComponent:
                 ]:
                     del st.session_state[key]
             st.success("👋 Logged out successfully.")
-            st.rerun()
+            st.switch_page("main.py")  # Return to main or login page
 
     # ---------- UTILITIES ----------
     def _validate_email(self, email: str) -> bool:
